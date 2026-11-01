@@ -165,8 +165,9 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudDocs, setCloudDocs] = useState<CloudBusinessDoc[]>([]);
   const [pinVerified, setPinVerified] = useState<boolean>(() => {
+    if (StorageService.isProductionBranchLocked()) return false;
     const activeUsr = StorageService.getActiveUser();
-    return activeUsr.role === 'partner' || activeUsr.role === 'manager';
+    return activeUsr.role === 'partner';
   });
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
@@ -184,6 +185,10 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
   const [itemSearch, setItemSearch] = useState<string>('');
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
+  const [copiedBranchLinkId, setCopiedBranchLinkId] = useState<string | null>(null);
+  const [lockedBranchId, setLockedBranchIdState] = useState<string | null>(() =>
+    StorageService.getLockedBranchId()
+  );
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     text: string;
@@ -194,10 +199,56 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
     setTimeout(() => setFeedback(null), 5000);
   };
 
+  const getProductionBaseUrl = () => {
+    if (
+      typeof window !== 'undefined' &&
+      !window.location.origin.includes('ais-dev-')
+    ) {
+      return `${window.location.origin}${window.location.pathname}`;
+    }
+    return 'https://ais-pre-l3snrurformehjombrnprs-789700516395.europe-west2.run.app/';
+  };
+
+  const handleCopyLockedBranchUrl = (docItem: CloudBusinessDoc) => {
+    const base = getProductionBaseUrl().replace(/\/$/, '');
+    const url = `${base}/?branch=${encodeURIComponent(docItem.businessId)}`;
+    navigator.clipboard.writeText(url);
+    setCopiedBranchLinkId(docItem.businessId);
+    setTimeout(() => setCopiedBranchLinkId(null), 3000);
+    showNotice(
+      `تم نسخ الرابط المستقل والمقفل لفرع «${docItem.businessName} - ${docItem.branchName}»! عند فتحه سيرى الموظفون هذا الفرع فقط بدون AI Studio.`,
+      'info'
+    );
+  };
+
+  const handleLockDeviceToBranch = (docItem: CloudBusinessDoc) => {
+    CloudSyncService.restoreCloudBusinessToLocal(docItem, true);
+    StorageService.setLockedBranchId(docItem.businessId);
+    setLockedBranchIdState(docItem.businessId);
+    onRefreshLocal();
+    showNotice(
+      `تم قفل هذا الجهاز في وضع الإنتاج على «${docItem.businessName} - ${docItem.branchName}» فقط! اختفت جميع المنشآت الأخرى وأدوات المطور عن الموظفين.`,
+      'success'
+    );
+  };
+
+  const handleUnlockDevice = () => {
+    StorageService.setLockedBranchId(null);
+    setLockedBranchIdState(null);
+    onRefreshLocal();
+    showNotice(
+      'تم فك قفل الفرع على هذا الجهاز واستعادة وضع الأدمين العام متعدد المنشآت!',
+      'info'
+    );
+  };
+
   useEffect(() => {
     const unsubAuth = CloudSyncService.subscribeAuth((user) => {
       setCloudUser(user);
-      if (user?.email?.toLowerCase() === 'magwwad@gmail.com') {
+      if (
+        user?.email?.toLowerCase() === 'magwwad@gmail.com' &&
+        !StorageService.isProductionBranchLocked()
+      ) {
         setPinVerified(true);
       }
     });
@@ -240,16 +291,16 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
 
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const s = StorageService.getSettings();
     if (
       pinInput.trim() === '1234' ||
-      pinInput.trim() === '3333' ||
-      StorageService.verifyAdminPin(pinInput.trim())
+      pinInput.trim() === (s.adminPin || '1234')
     ) {
       setPinVerified(true);
       setPinError('');
       setPinInput('');
     } else {
-      setPinError('رمز PIN غير صحيح. أدخل الرمز الماستر للأدمين العام (1234).');
+      setPinError('رمز PIN غير صحيح. هذه البوابة للأدمين العام فقط (الرمز الماستر 1234).');
     }
   };
 
@@ -383,11 +434,12 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
   };
 
   const handleCopyDirectAdminLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}?mode=remote-admin`;
+    const base = getProductionBaseUrl().replace(/\/$/, '');
+    const url = `${base}/?mode=remote-admin`;
     navigator.clipboard.writeText(url);
     setCopiedUrl(true);
     setTimeout(() => setCopiedUrl(false), 3000);
-    showNotice('تم نسخ الرابط المباشر لغرفة قيادة الأدمين العام! يمكنك حفظه في المفضلة على هاتفك.', 'info');
+    showNotice('تم نسخ رابط الإنتاج المستقل لغرفة قيادة الأدمين العام (بدون AI Studio)!', 'info');
   };
 
   // Consolidated KPIs across all cloud branches
@@ -624,6 +676,64 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
                 >
                   <X className="w-4 h-4" />
                 </button>
+              </div>
+            </div>
+
+            {/* PRODUCTION BRANCH LOCK BANNER */}
+            <div className="mb-4 p-3 rounded-2xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                {lockedBranchId ? (
+                  <div className="p-2 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded-xl">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                ) : (
+                  <div className="p-2 bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded-xl">
+                    <Unlock className="w-4 h-4" />
+                  </div>
+                )}
+                <div>
+                  <span className="font-black text-white block">
+                    {lockedBranchId
+                      ? `وضع الإنتاج المقفل نشط على هذا الجهاز (Branch Lock: ${lockedBranchId})`
+                      : 'هذا الجهاز في وضع الأدمين العام المفتوح (يرى كل المنشآت الـ 6)'}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {lockedBranchId
+                      ? 'الموظفون على هذا الجهاز لا يرون أي فرع آخر ولا يرون أزرار تبديل الأنشطة أو أدوات المطور.'
+                      : 'يمكنك نسخ «رابط الفرع المقفل» لأي محل بالأسفل، أو قفل هذا الجهاز على فرع واحد لتجربة وضع الإنتاج.'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {lockedBranchId ? (
+                  <button
+                    type="button"
+                    onClick={handleUnlockDevice}
+                    className="py-1.5 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>فك قفل الفرع (وضع الأدمين العام)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const activeId = StorageService.getActiveBusinessId();
+                      StorageService.setLockedBranchId(activeId);
+                      setLockedBranchIdState(activeId);
+                      onRefreshLocal();
+                      showNotice(
+                        'تم تفعيل وضع قفل الإنتاج على الفرع الحالي! أغلق هذه النافذة لترى كيف يبدو النظام لموظفي الفرع.',
+                        'success'
+                      );
+                    }}
+                    className="py-1.5 px-3 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>قفل هذا الجهاز على الفرع الحالي فقط</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -966,32 +1076,71 @@ export const RemoteSuperAdminModal: React.FC<Props> = ({
                             </div>
 
                             {/* Card Footer Actions */}
-                            <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedBizId(docItem.businessId);
-                                  setHasUnsavedChanges(false);
-                                  setDraftBundle(
-                                    JSON.parse(JSON.stringify(docItem.bundle))
-                                  );
-                                  setMainTab('inspector');
-                                }}
-                                className="flex-1 py-2 px-3 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>فحص وتحكم عن بُعد</span>
-                              </button>
+                            <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedBizId(docItem.businessId);
+                                    setHasUnsavedChanges(false);
+                                    setDraftBundle(
+                                      JSON.parse(JSON.stringify(docItem.bundle))
+                                    );
+                                    setMainTab('inspector');
+                                  }}
+                                  className="flex-1 py-2 px-3 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>فحص وتحكم عن بُعد</span>
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() => handlePullBranchToLocalPOS(docItem)}
-                                className="py-2 px-3 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                                title="سحب بيانات هذا الفرع وتشغيلها محلياً على هذا الجهاز"
-                              >
-                                <CloudDownload className="w-3.5 h-3.5 text-amber-400" />
-                                <span>تشغيل هنا</span>
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePullBranchToLocalPOS(docItem)}
+                                  className="py-2 px-3 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                  title="سحب بيانات هذا الفرع وتشغيلها محلياً على هذا الجهاز"
+                                >
+                                  <CloudDownload className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>تشغيل هنا</span>
+                                </button>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyLockedBranchUrl(docItem)}
+                                  className="flex-1 py-1.5 px-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                  title="انسخ رابط الإنتاج المستقل والمقفل على هذا الفرع فقط لإرساله لمدير الفرع أو الكاشير"
+                                >
+                                  {copiedBranchLinkId === docItem.businessId ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                      <span className="text-emerald-300">تم نسخ رابط الفرع المقفل</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>رابط الإنتاج المقفل للفرع</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleLockDeviceToBranch(docItem)}
+                                  className={`py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer border ${
+                                    lockedBranchId === docItem.businessId
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                      : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border-slate-800'
+                                  }`}
+                                  title="قفل هذا الجهاز ليعمل على هذا الفرع فقط (وضع الإنتاج)"
+                                >
+                                  <Lock className="w-3 h-3" />
+                                  <span>
+                                    {lockedBranchId === docItem.businessId ? 'مقفل عليه' : 'قفل الجهاز'}
+                                  </span>
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );

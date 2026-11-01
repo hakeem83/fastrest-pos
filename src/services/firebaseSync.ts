@@ -574,6 +574,27 @@ export class CloudSyncService {
   }
 
   /**
+   * Pulls a single branch snapshot from Firestore by businessId and restores it locally
+   */
+  static async pullSingleCloudBranchById(
+    businessId: string,
+    switchImmediately = true
+  ): Promise<CloudBusinessDoc | null> {
+    if (!auth.currentUser) return null;
+    const cleanId = sanitizeId(businessId);
+    const docPath = `cloud_businesses/${cleanId}`;
+    try {
+      const snap = await getDoc(doc(db, 'cloud_businesses', cleanId));
+      if (!snap.exists()) return null;
+      const cloudDoc = snap.data() as CloudBusinessDoc;
+      this.restoreCloudBusinessToLocal(cloudDoc, switchImmediately);
+      return cloudDoc;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, docPath);
+    }
+  }
+
+  /**
    * Deletes a branch snapshot from the cloud (does not delete local data)
    */
   static async deleteCloudBusiness(businessId: string): Promise<void> {

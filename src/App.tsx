@@ -180,6 +180,13 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Check if URL has a dedicated production branch lock (?branch=<businessId>)
+    const params = new URLSearchParams(window.location.search);
+    const branchParam = params.get('branch');
+    if (branchParam) {
+      StorageService.setLockedBranchId(branchParam);
+    }
+
     refreshData();
 
     const handleOnline = () => {
@@ -199,8 +206,17 @@ export default function App() {
 
     const unsubCloud = CloudSyncService.subscribeAuth((user) => {
       setCloudConnected(!!user);
-      if (user && navigator.onLine && CloudSyncService.isAutoSyncEnabled()) {
-        CloudSyncService.syncActiveBusinessToCloud().catch(() => {});
+      if (user && navigator.onLine) {
+        const lockedId = StorageService.getLockedBranchId();
+        if (lockedId) {
+          CloudSyncService.pullSingleCloudBranchById(lockedId, true)
+            .then((pulled) => {
+              if (pulled) refreshData();
+            })
+            .catch(() => {});
+        } else if (CloudSyncService.isAutoSyncEnabled()) {
+          CloudSyncService.syncActiveBusinessToCloud().catch(() => {});
+        }
       }
     });
 
@@ -239,6 +255,8 @@ export default function App() {
     activeUser.role,
     activeUser.maxExpenseLimitMinor
   );
+  const isBranchLocked = StorageService.isProductionBranchLocked();
+  const canAccessPlatformMultiTenant = !isBranchLocked && activeUser.role === 'partner';
 
   const filteredVouchers = vouchers.filter((v) => {
     const matchesType = voucherFilter === 'all' || v.type === voucherFilter;
@@ -276,13 +294,25 @@ export default function App() {
 
       {/* 2. CASHIER COUNTER TOP BAR */}
       <header className="no-print bg-slate-900 border-b border-slate-800 px-4 lg:px-8 py-3 sticky top-0 z-30 flex items-center justify-between gap-4 shadow-md">
-        {/* Brand & Store Profile with Multi-Tenant Switcher */}
+        {/* Brand & Store Profile (Locked to single branch in production or for non-super-admins) */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => setShowBusinessSwitcherModal(true)}
-            className="flex items-center gap-3 p-1.5 -m-1.5 hover:bg-slate-800/80 rounded-2xl transition-all cursor-pointer text-right group border border-transparent hover:border-slate-700/60"
-            title="اضغط لتبديل المطعم أو إنشاء منشأة تجارية جديدة (Multi-Tenant)"
+            onClick={() => {
+              if (canAccessPlatformMultiTenant) {
+                setShowBusinessSwitcherModal(true);
+              }
+            }}
+            className={`flex items-center gap-3 p-1.5 -m-1.5 rounded-2xl transition-all text-right group border border-transparent ${
+              canAccessPlatformMultiTenant
+                ? 'hover:bg-slate-800/80 cursor-pointer hover:border-slate-700/60'
+                : 'cursor-default'
+            }`}
+            title={
+              canAccessPlatformMultiTenant
+                ? 'اضغط لتبديل المطعم أو إنشاء منشأة تجارية جديدة (للأدمين العام فقط)'
+                : `${settings.restaurantName} - ${settings.branchName}`
+            }
           >
             {settings.logoBase64 ? (
               <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center overflow-hidden border border-slate-700 shadow-xs">
@@ -293,7 +323,7 @@ export default function App() {
                 />
               </div>
             ) : (
-              <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl group-hover:bg-amber-500/20 transition-colors">
+              <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl">
                 {isRetail ? (
                   <Store className="w-5 h-5 stroke-[2.2]" />
                 ) : (
@@ -303,13 +333,15 @@ export default function App() {
             )}
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-base font-black tracking-tight text-white block group-hover:text-amber-300 transition-colors">
+                <span className="text-base font-black tracking-tight text-white block">
                   {settings.restaurantName}
                 </span>
                 <span className="text-[10px] bg-slate-800 text-amber-400 px-2 py-0.5 rounded font-semibold border border-slate-700">
                   {isRetail ? 'محل تجزئة' : 'مطعم وجبات'}
                 </span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-transform group-hover:translate-y-0.5" />
+                {canAccessPlatformMultiTenant && (
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-transform group-hover:translate-y-0.5" />
+                )}
               </div>
               <div className="flex items-center gap-2 text-[11px] text-slate-400">
                 <span>{settings.branchName}</span>
@@ -319,15 +351,17 @@ export default function App() {
             </div>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowBusinessSwitcherModal(true)}
-            className="hidden lg:flex items-center gap-1.5 py-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border border-slate-700 rounded-xl text-[11px] font-bold cursor-pointer transition-colors shadow-xs"
-            title="إدارة وتبديل المنشآت (تعدد الأنشطة)"
-          >
-            <Building2 className="w-3.5 h-3.5 text-amber-400" />
-            <span>الأنشطة ({StorageService.getBusinesses().length})</span>
-          </button>
+          {canAccessPlatformMultiTenant && (
+            <button
+              type="button"
+              onClick={() => setShowBusinessSwitcherModal(true)}
+              className="hidden lg:flex items-center gap-1.5 py-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border border-slate-700 rounded-xl text-[11px] font-bold cursor-pointer transition-colors shadow-xs"
+              title="إدارة وتبديل المنشآت (خاص بالأدمين العام فقط)"
+            >
+              <Building2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>الأنشطة ({StorageService.getBusinesses().length})</span>
+            </button>
+          )}
         </div>
 
         {/* Center: Shift & Active User Role Switcher */}
@@ -349,7 +383,7 @@ export default function App() {
             type="button"
             onClick={() => setShowUserSwitcherModal(true)}
             className={`flex items-center gap-2 py-1.5 px-3 rounded-xl border transition-all cursor-pointer ${activePerms.badgeColor}`}
-            title="اضغط لتبديل المستخدم الحالي (كاشير / محاسب / مدير / شريك)"
+            title="اضغط لتبديل المستخدم الحالي داخل هذا الفرع"
           >
             <Users className="w-3.5 h-3.5" />
             <span className="font-black">{activeUser.name}</span>
@@ -368,17 +402,15 @@ export default function App() {
             <span>{activePerms.labelAr}</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowAdminPortal(true)}
-            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors cursor-pointer ${
+          <div
+            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border ${
               isOnline
                 ? cloudConnected || driveConnected
-                  ? 'bg-sky-500/15 border-sky-500/30 text-sky-300 hover:bg-sky-500/25'
-                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                  ? 'bg-sky-500/15 border-sky-500/30 text-sky-300'
+                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                 : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}
-            title="اضغط لفتح مركز المزامنة السحابية للفروع وخزينة الكلمات السرية"
+            title="حالة الاتصال والمزامنة للفرع"
           >
             {isOnline ? (
               <Cloud className="w-3.5 h-3.5" />
@@ -391,10 +423,10 @@ export default function App() {
                   ? 'مزامنة سحابية نشطة'
                   : driveConnected
                   ? 'سحابي متصل'
-                  : 'أونلاين (اضغط للربط السحابي)'
+                  : 'أونلاين'
                 : 'أوفلاين محلي'}
             </span>
-          </button>
+          </div>
 
           {!isStandalone && (
             <button
@@ -407,24 +439,37 @@ export default function App() {
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setShowRemoteSuperAdmin(true)}
-            className="flex items-center gap-1.5 py-1.5 px-3 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-black transition-colors cursor-pointer shadow-xs"
-            title="غرفة القيادة المركزية للأدمين العام: مراقبة وإدارة كافة الفروع عن بُعد عبر السحابة"
-          >
-            <Globe className="w-3.5 h-3.5 text-sky-400" />
-            <span>الإدارة عن بُعد (الأدمين العام)</span>
-          </button>
+          {canAccessPlatformMultiTenant ? (
+            <button
+              type="button"
+              onClick={() => setShowRemoteSuperAdmin(true)}
+              className="flex items-center gap-1.5 py-1.5 px-3 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-black transition-colors cursor-pointer shadow-xs"
+              title="غرفة القيادة المركزية للأدمين العام: مراقبة وإدارة كافة الفروع عن بُعد عبر السحابة"
+            >
+              <Globe className="w-3.5 h-3.5 text-sky-400" />
+              <span>الإدارة عن بُعد (الأدمين العام)</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowRemoteSuperAdmin(true)}
+              className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-500 hover:text-sky-400 border border-slate-800 rounded-xl text-xs transition-colors cursor-pointer"
+              title="بوابة المالك (الأدمين العام للمنصة فقط - تتطلب الرمز الماستر)"
+            >
+              <Globe className="w-3.5 h-3.5" />
+            </button>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setShowAdminPortal(true)}
-            className="flex items-center gap-1.5 py-1.5 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">بوابة الإدارة والمحاسبة</span>
-          </button>
+          {activePerms.canAccessAdminVault && (
+            <button
+              type="button"
+              onClick={() => setShowAdminPortal(true)}
+              className="flex items-center gap-1.5 py-1.5 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">إدارة الفرع والمحاسبة</span>
+            </button>
+          )}
 
           {activeShift ? (
             <button

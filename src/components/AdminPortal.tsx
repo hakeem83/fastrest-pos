@@ -118,8 +118,18 @@ export const AdminPortal: React.FC<Props> = ({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
     currentPerms.canAccessAdminVault
   );
+  const [unlockedWithMasterPin, setUnlockedWithMasterPin] = useState<boolean>(
+    currentUser.role === 'partner' && !StorageService.isProductionBranchLocked()
+  );
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
+
+  // Platform-wide tools (Multi-branch switcher, Cloud Credentials Vault, Developer Mock/Wipe tools)
+  // are strictly visible ONLY to the Super Admin / Partner Owner when not locked as a normal staff member
+  const canViewPlatformSuperAdminTools =
+    unlockedWithMasterPin ||
+    (currentUser.role === 'partner' && !StorageService.isProductionBranchLocked());
+
   const [activeTab, setActiveTab] = useState<
     | 'cloud_vault'
     | 'users_roles'
@@ -134,19 +144,31 @@ export const AdminPortal: React.FC<Props> = ({
     | 'shifts_history'
     | 'branding'
     | 'dev_tools'
-  >(initialTab || 'cloud_vault');
+  >(
+    initialTab ||
+      (canViewPlatformSuperAdminTools ? 'cloud_vault' : 'shifts_history')
+  );
 
   if (!isOpen) return null;
 
   const handleVerifyPin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (StorageService.verifyAdminPin(pinInput)) {
+    const trimmed = pinInput.trim();
+    if (StorageService.verifyAdminPin(trimmed)) {
       setIsAuthenticated(true);
+      if (trimmed === '1234' || trimmed === (settings.adminPin || '1234')) {
+        setUnlockedWithMasterPin(true);
+      } else {
+        setUnlockedWithMasterPin(false);
+        if (activeTab === 'cloud_vault' || activeTab === 'dev_tools') {
+          setActiveTab('shifts_history');
+        }
+      }
       setPinError('');
       setPinInput('');
     } else {
       setPinError(
-        'رمز PIN غير صحيح. أدخل رمز الشريك (1234) أو المدير (3333) أو المحاسب (2222).'
+        'رمز PIN غير صحيح. أدخل رمز صلاحيتك المعتمد لهذا الفرع.'
       );
       setPinInput('');
     }
@@ -169,10 +191,10 @@ export const AdminPortal: React.FC<Props> = ({
             </div>
             <div>
               <h3 className="text-xl font-black text-white mb-1">
-                بوابة الإدارة والرقابة المالية (Executive Vault)
+                بوابة إدارة الفرع والرقابة المالية
               </h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                أنت مسجل حالياً كـ ({currentUser.name} - {currentPerms.labelAr}). للدخول إلى بوابة الإدارة والمحاسبة، أدخل رمز PIN المحاسب (2222) أو المدير (3333) أو الشريك المالك (1234).
+                أنت مسجل حالياً كـ ({currentUser.name} - {currentPerms.labelAr}) في «{settings.restaurantName} - {settings.branchName}». أدخل رمز الـ PIN الخاص بدورك الوظيفي للمتابعة.
               </p>
             </div>
 
@@ -222,7 +244,7 @@ export const AdminPortal: React.FC<Props> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-base font-black text-white">
-                      مظلة الإدارة والرقابة المالية (Admin & Accounting Vault)
+                      إدارة الفرع والرقابة المالية ({settings.branchName})
                     </h2>
                     <span
                       className={`text-[10px] border px-2 py-0.5 rounded font-bold ${currentPerms.badgeColor}`}
@@ -231,60 +253,64 @@ export const AdminPortal: React.FC<Props> = ({
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-400">
-                    {settings.restaurantName} · إدارة الصلاحيات وحسابات الشركاء والموظفين والموردين والعملاء
+                    {settings.restaurantName} · صلاحيات معزولة حسب الفرع والدور الوظيفي
                   </span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                {onOpenBusinessSwitcher && (
+                {canViewPlatformSuperAdminTools && onOpenBusinessSwitcher && (
                   <button
                     type="button"
                     onClick={onOpenBusinessSwitcher}
                     className="flex items-center gap-1.5 py-1.5 px-2.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                    title="التبديل بين المطاعم والأنشطة أو إنشاء منشأة جديدة"
+                    title="التبديل بين المطاعم والأنشطة أو إنشاء منشأة جديدة (للأدمين العام فقط)"
                   >
                     <Building2 className="w-3.5 h-3.5 text-amber-400" />
                     <span className="hidden sm:inline">الأنشطة ({StorageService.getBusinesses().length})</span>
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('cloud_vault')}
-                  className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
-                    activeTab === 'cloud_vault'
-                      ? 'bg-sky-500 text-slate-950 border-sky-400'
-                      : 'bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border-sky-500/30'
-                  }`}
-                  title="مركز المزامنة السحابية للفروع وخزينة الكلمات السرية"
-                >
-                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">السحابة والكلمات السرية</span>
-                </button>
+                {canViewPlatformSuperAdminTools && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('cloud_vault')}
+                      className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                        activeTab === 'cloud_vault'
+                          ? 'bg-sky-500 text-slate-950 border-sky-400'
+                          : 'bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border-sky-500/30'
+                      }`}
+                      title="مركز المزامنة السحابية للفروع وخزينة الكلمات السرية (للأدمين العام فقط)"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="hidden sm:inline">السحابة والكلمات السرية</span>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('dev_tools')}
-                  className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
-                    activeTab === 'dev_tools'
-                      ? 'bg-amber-500 text-slate-950 border-amber-400'
-                      : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
-                  }`}
-                  title="أدوات المطور: تبديل ببيانات تجريبية أو تصفير البيانات"
-                >
-                  <Cpu className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">أدوات المطور</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('dev_tools')}
+                      className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                        activeTab === 'dev_tools'
+                          ? 'bg-amber-500 text-slate-950 border-amber-400'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
+                      }`}
+                      title="أدوات المطور: تبديل ببيانات تجريبية أو تصفير البيانات (للأدمين العام فقط)"
+                    >
+                      <Cpu className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="hidden sm:inline">أدوات المطور</span>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={onRestartOnboarding}
-                  className="flex items-center gap-1 py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">إعادة التهيئة</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={onRestartOnboarding}
+                      className="flex items-center gap-1 py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="hidden sm:inline">إعادة التهيئة</span>
+                    </button>
+                  </>
+                )}
 
                 <button
                   type="button"
@@ -308,29 +334,33 @@ export const AdminPortal: React.FC<Props> = ({
 
             {/* Navigation Tabs */}
             <div className="flex items-center gap-1.5 border-b border-slate-800 pb-3 mb-4 text-xs font-semibold overflow-x-auto">
-              <button
-                onClick={() => setActiveTab('cloud_vault')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                  activeTab === 'cloud_vault'
-                    ? 'bg-sky-500 text-slate-950 font-black border-sky-400'
-                    : 'bg-sky-500/10 text-sky-300 border-sky-500/30 hover:bg-sky-500/20'
-                }`}
-              >
-                <Cloud className="w-4 h-4" />
-                <span>المزامنة السحابية والكلمات السرية</span>
-              </button>
+              {canViewPlatformSuperAdminTools && (
+                <button
+                  onClick={() => setActiveTab('cloud_vault')}
+                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                    activeTab === 'cloud_vault'
+                      ? 'bg-sky-500 text-slate-950 font-black border-sky-400'
+                      : 'bg-sky-500/10 text-sky-300 border-sky-500/30 hover:bg-sky-500/20'
+                  }`}
+                >
+                  <Cloud className="w-4 h-4" />
+                  <span>المزامنة السحابية والكلمات السرية</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('users_roles')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'users_roles'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                <span>المستخدمين والصلاحيات ({allUsers.length})</span>
-              </button>
+              {currentPerms.canManageUsersAndRoles && (
+                <button
+                  onClick={() => setActiveTab('users_roles')}
+                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                    activeTab === 'users_roles'
+                      ? 'bg-amber-500 text-slate-950 font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>المستخدمين والصلاحيات ({allUsers.length})</span>
+                </button>
+              )}
 
               <button
                 onClick={() => setActiveTab('partners_staff')}
@@ -394,19 +424,21 @@ export const AdminPortal: React.FC<Props> = ({
                 </button>
               )}
 
-              <button
-                onClick={() => setActiveTab('inventory')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'inventory'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Package className="w-4 h-4" />
-                <span>المخزون والتكاليف ({inventory.length})</span>
-              </button>
+              {currentPerms.canManageInventoryAndRecipes && (
+                <button
+                  onClick={() => setActiveTab('inventory')}
+                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                    activeTab === 'inventory'
+                      ? 'bg-amber-500 text-slate-950 font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Package className="w-4 h-4" />
+                  <span>المخزون والتكاليف ({inventory.length})</span>
+                </button>
+              )}
 
-              {!isRetail && (
+              {!isRetail && currentPerms.canManageInventoryAndRecipes && (
                 <button
                   onClick={() => setActiveTab('recipes')}
                   className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
@@ -444,34 +476,38 @@ export const AdminPortal: React.FC<Props> = ({
                 <span>سجل الورديات ({shifts.length})</span>
               </button>
 
-              <button
-                onClick={() => setActiveTab('branding')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'branding'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Building2 className="w-4 h-4" />
-                <span>الهوية والطباعة ورمز PIN</span>
-              </button>
+              {currentPerms.canManageUsersAndRoles && (
+                <button
+                  onClick={() => setActiveTab('branding')}
+                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                    activeTab === 'branding'
+                      ? 'bg-amber-500 text-slate-950 font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>الهوية والطباعة ورمز PIN</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setActiveTab('dev_tools')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                  activeTab === 'dev_tools'
-                    ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
-                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-                }`}
-              >
-                <Cpu className="w-4 h-4 text-amber-400" />
-                <span>أدوات المطور والبيانات (Mock & Wipe)</span>
-              </button>
+              {canViewPlatformSuperAdminTools && (
+                <button
+                  onClick={() => setActiveTab('dev_tools')}
+                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                    activeTab === 'dev_tools'
+                      ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
+                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                  }`}
+                >
+                  <Cpu className="w-4 h-4 text-amber-400" />
+                  <span>أدوات المطور والبيانات (Mock & Wipe)</span>
+                </button>
+              )}
             </div>
 
             {/* Tab Content */}
             <div className="flex-1 overflow-y-auto pr-1">
-              {activeTab === 'cloud_vault' && (
+              {activeTab === 'cloud_vault' && canViewPlatformSuperAdminTools && (
                 <CloudSyncAndCredentialsVault
                   settings={settings}
                   users={allUsers}
@@ -568,10 +604,11 @@ export const AdminPortal: React.FC<Props> = ({
                 <AdminSecurityModal
                   settings={settings}
                   onSettingsUpdated={onSettingsUpdated}
+                  onRefresh={onRefresh}
                 />
               )}
 
-              {activeTab === 'dev_tools' && (
+              {activeTab === 'dev_tools' && canViewPlatformSuperAdminTools && (
                 <DeveloperDataTools
                   settings={settings}
                   onRefresh={onRefresh}

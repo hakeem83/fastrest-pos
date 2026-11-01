@@ -1382,6 +1382,29 @@ export class StorageService {
     return bundle.business;
   }
 
+  static restoreCurrentBusinessFromBackupJSON(jsonContent: string): boolean {
+    try {
+      const bundle: BusinessBackupBundle = JSON.parse(jsonContent);
+      if (!bundle || !bundle.settings) {
+        return false;
+      }
+      const activeBizId = this.getActiveBusinessId();
+      const lockedBizId = this.getLockedBranchId();
+      const targetBizId = lockedBizId || activeBizId || bundle.business?.id || 'biz-default';
+
+      if (bundle.business) {
+        bundle.business.id = targetBizId;
+      }
+      bundle.settings.businessId = targetBizId;
+
+      localStorage.setItem(`fastrest_biz_bundle_${targetBizId}`, JSON.stringify(bundle));
+      this.loadBusinessSnapshot(bundle);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // --- Developer Mock Data & Wiping Operations ---
   static loadMockDemoData(type: 'restaurant' | 'retail' = 'restaurant'): void {
     const activeBizId = this.getActiveBusinessId();
@@ -2816,4 +2839,112 @@ export class StorageService {
 
     XLSX.writeFile(wb, `FastRest_POS_Report_${getTodayDateString()}.xlsx`);
   }
+
+  // --- Production Single-Branch Lock (Tenant Isolation) ---
+  static getLockedBranchId(): string | null {
+    return localStorage.getItem('fastrest_production_locked_branch_id_v2');
+  }
+
+  static setLockedBranchId(branchId: string | null): void {
+    if (!branchId) {
+      localStorage.removeItem('fastrest_production_locked_branch_id_v2');
+      return;
+    }
+    localStorage.setItem('fastrest_production_locked_branch_id_v2', branchId);
+    const businesses = this.getBusinesses();
+    if (businesses.some((b) => b.id === branchId)) {
+      this.switchBusiness(branchId);
+    } else {
+      // Brand-new branch PC opening ?branch=<branchId> for the first time:
+      // Initialize a clean slot for this branchId (with isOnboarded: false) so it never shows demo data
+      const currentBizId = this.getActiveBusinessId();
+      this.saveBusinessSnapshot(currentBizId);
+
+      const newBiz: TenantBusiness = {
+        id: branchId,
+        name: 'منشأة جديدة',
+        branchName: 'الفرع الرئيسي',
+        businessType: 'restaurant',
+        currency: 'ج.م',
+        phone: '',
+        address: '',
+        createdAt: getTodayDateString(),
+        lastOpenedAt: new Date().toISOString(),
+      };
+
+      const updatedList = [newBiz, ...businesses];
+      localStorage.setItem(KEYS.BUSINESSES, JSON.stringify(updatedList));
+      localStorage.setItem(KEYS.ACTIVE_BUSINESS_ID, branchId);
+
+      const newSettings: RestaurantSettings = {
+        ...DEFAULT_SETTINGS,
+        businessId: branchId,
+        restaurantName: '',
+        branchName: 'الفرع الرئيسي',
+        businessType: 'restaurant',
+        currency: 'ج.م',
+        phone: '',
+        address: '',
+        isOnboarded: false,
+      };
+      this.saveSettings(newSettings);
+
+      const initialCategories: AccountCategory[] = [
+        { id: 'cat-exp-1', code: 'EXP-101', name: 'مشتريات خامات ومطبخ طازجة', type: 'expense', linkedPartyType: 'general' },
+        { id: 'cat-exp-2', code: 'EXP-102', name: 'أجور ومرتبات وسلف العاملين', type: 'expense', linkedPartyType: 'employee' },
+        { id: 'cat-exp-3', code: 'EXP-103', name: 'فواتير مرافق وكهرباء وتشغيل', type: 'expense', linkedPartyType: 'general' },
+        { id: 'cat-exp-4', code: 'EXP-104', name: 'سداد دفعات موردين آجل', type: 'expense', linkedPartyType: 'supplier' },
+        { id: 'cat-exp-5', code: 'EXP-105', name: 'مسحوبات جاري الشركاء والملاك', type: 'expense', linkedPartyType: 'partner' },
+        { id: 'cat-rec-1', code: 'REC-201', name: 'إيرادات مبيعات نقدية وخارجية', type: 'receipt', linkedPartyType: 'general' },
+        { id: 'cat-rec-2', code: 'REC-202', name: 'تحصيل مديونية عملاء آجل', type: 'receipt', linkedPartyType: 'customer' },
+        { id: 'cat-rec-3', code: 'REC-203', name: 'إيداع وتمويل جاري الشركاء', type: 'receipt', linkedPartyType: 'partner' },
+      ];
+      this.saveCategories(initialCategories);
+
+      const initialUsers: AppUser[] = [
+        {
+          id: `usr-cashier-${Date.now()}`,
+          code: 'USR-01',
+          name: 'كاشير الوردية',
+          role: 'cashier',
+          pin: '1111',
+          phone: '',
+          isActive: true,
+          maxExpenseLimitMinor: 20000,
+          notes: 'حساب الكاشير الافتراضي',
+        },
+        {
+          id: `usr-owner-${Date.now() + 1}`,
+          code: 'USR-02',
+          name: 'المالك / المدير العام',
+          role: 'partner',
+          pin: '1234',
+          phone: '',
+          isActive: true,
+          maxExpenseLimitMinor: 0,
+          notes: 'المالك المؤسس - صلاحيات كاملة',
+        },
+      ];
+      this.saveUsers(initialUsers);
+      this.setActiveUser(initialUsers[1].id);
+      this.savePartners([]);
+      this.saveInventory([]);
+      this.saveMenuItems([]);
+      this.saveSuppliers([]);
+      this.saveCustomers([]);
+      this.saveShifts([]);
+      this.saveVouchers([]);
+      this.saveSaleOrders([]);
+      this.savePromotions([]);
+      this.saveEmployees([]);
+      this.saveKitchenStations(DEFAULT_KITCHEN_STATIONS);
+      this.saveDeliveryDrivers([]);
+      this.saveBusinessSnapshot(branchId);
+    }
+  }
+
+  static isProductionBranchLocked(): boolean {
+    return Boolean(this.getLockedBranchId());
+  }
 }
+

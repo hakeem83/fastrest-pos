@@ -121,7 +121,9 @@ export const UserSwitcherModal: React.FC<Props> = ({
                     </span>
                   </div>
                   <span className="text-[10px] font-mono bg-slate-900 border border-slate-800 px-2 py-1 rounded text-slate-400">
-                    PIN: {u.pin}
+                    {activeUser.role === 'partner' && !StorageService.isProductionBranchLocked()
+                      ? `PIN: ${u.pin}`
+                      : 'PIN: ••••'}
                   </span>
                 </div>
 

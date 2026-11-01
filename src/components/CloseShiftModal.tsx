@@ -39,10 +39,19 @@ export const CloseShiftModal: React.FC<Props> = ({
   const [unlockedBlindView, setUnlockedBlindView] = useState(false);
   const [supervisorPin, setSupervisorPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [autoDownloadBackup, setAutoDownloadBackup] = useState(true);
 
   const actualMinor = Math.round((parseFloat(actualCashStr) || 0) * 100);
   const variance = actualMinor - calc.expectedCashInDrawer;
   const canSeeBookFigures = !isBlindEnforced || unlockedBlindView;
+
+  const triggerLocalBackupDownload = () => {
+    try {
+      StorageService.exportBusinessBackupFile();
+    } catch {
+      // ignore download error if blocked
+    }
+  };
 
   const handleUnlockBlind = () => {
     setPinError('');
@@ -57,6 +66,9 @@ export const CloseShiftModal: React.FC<Props> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     StorageService.closeShift(shift.id, actualMinor, closingNotes.trim());
+    if (autoDownloadBackup) {
+      triggerLocalBackupDownload();
+    }
     onShiftClosed();
   };
 
@@ -175,6 +187,18 @@ export const CloseShiftModal: React.FC<Props> = ({
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
             />
           </div>
+
+          <label className="flex items-center gap-2.5 p-2.5 bg-slate-950 border border-slate-800 rounded-xl cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoDownloadBackup}
+              onChange={(e) => setAutoDownloadBackup(e.target.checked)}
+              className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+            />
+            <span className="text-[11px] text-slate-300 font-bold">
+              حفظ نسخة احتياطية محلية (.JSON) تلقائياً على جهاز الويندوز عند إغلاق الوردية (موصى به للأوفلاين)
+            </span>
+          </label>
         </div>
 
         <div className="flex items-center gap-2 pt-2">
