@@ -1,0 +1,162 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Hardened Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'magwwad@gmail.com'
+      );
+    }
+
+    // Validation Blueprint for CloudBusinessSnapshot
+    function isValidCloudBusinessSnapshot(data, businessId) {
+      return data.keys().hasAll([
+        'businessId',
+        'ownerUid',
+        'ownerEmail',
+        'businessName',
+        'branchName',
+        'businessType',
+        'currency',
+        'ordersCount',
+        'totalRevenueMinor',
+        'openShiftsCount',
+        'inventoryItemsCount',
+        'bundle',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'businessId',
+        'ownerUid',
+        'ownerEmail',
+        'businessName',
+        'branchName',
+        'businessType',
+        'currency',
+        'ordersCount',
+        'totalRevenueMinor',
+        'openShiftsCount',
+        'inventoryItemsCount',
+        'bundle',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.businessId is string &&
+      data.businessId == businessId &&
+      data.businessId.size() >= 1 &&
+      data.businessId.size() <= 128 &&
+      data.businessId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerUid is string &&
+      data.ownerUid == request.auth.uid &&
+      data.ownerUid.size() >= 1 &&
+      data.ownerUid.size() <= 128 &&
+      data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerEmail is string &&
+      data.ownerEmail.size() >= 3 &&
+      data.ownerEmail.size() <= 256 &&
+      data.businessName is string &&
+      data.businessName.size() >= 1 &&
+      data.businessName.size() <= 200 &&
+      data.branchName is string &&
+      data.branchName.size() >= 1 &&
+      data.branchName.size() <= 200 &&
+      data.businessType is string &&
+      (data.businessType == 'restaurant' || data.businessType == 'retail') &&
+      data.currency is string &&
+      data.currency.size() >= 1 &&
+      data.currency.size() <= 20 &&
+      data.ordersCount is int &&
+      data.ordersCount >= 0 &&
+      data.totalRevenueMinor is number &&
+      data.totalRevenueMinor >= 0 &&
+      data.openShiftsCount is int &&
+      data.openShiftsCount >= 0 &&
+      data.inventoryItemsCount is int &&
+      data.inventoryItemsCount >= 0 &&
+      data.bundle is map &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Admins lookup collection (read-only for self/admin, no client writes)
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list, create, update, delete: if false;
+    }
+
+    // Cloud Business Snapshots Collection
+    match /cloud_businesses/{businessId} {
+      allow get: if isVerifiedUser() && isValidId(businessId) && (
+        existing().ownerUid == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isVerifiedUser() && (
+        resource.data.ownerUid == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(businessId) &&
+        isValidCloudBusinessSnapshot(incoming(), businessId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(businessId) &&
+        isValidCloudBusinessSnapshot(incoming(), businessId) &&
+        incoming().updatedAt == request.time &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().businessId == existing().businessId &&
+        incoming().ownerUid == existing().ownerUid && (
+          isAdmin() ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'ownerEmail',
+              'businessName',
+              'branchName',
+              'businessType',
+              'currency',
+              'ordersCount',
+              'totalRevenueMinor',
+              'openShiftsCount',
+              'inventoryItemsCount',
+              'bundle',
+              'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(businessId) &&
+        (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+  }
+}

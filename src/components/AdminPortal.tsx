@@ -25,15 +25,18 @@ import { UsersRolesManager } from './UsersRolesManager';
 import { PartnersAndStaffLedger } from './PartnersAndStaffLedger';
 import { DeveloperDataTools } from './DeveloperDataTools';
 import { KitchenAndDriversManager } from './KitchenAndDriversManager';
+import { CloudSyncAndCredentialsVault } from './CloudSyncAndCredentialsVault';
 import {
   Bike,
   BookOpen,
   Building2,
   ChefHat,
+  Cloud,
   Cpu,
   CreditCard,
   FileSpreadsheet,
   History,
+  KeyRound,
   Landmark,
   LogOut,
   Package,
@@ -60,6 +63,20 @@ interface Props {
   employees?: Employee[];
   vouchers?: Voucher[];
   isOpen: boolean;
+  initialTab?:
+    | 'cloud_vault'
+    | 'users_roles'
+    | 'partners_staff'
+    | 'customers_credit'
+    | 'suppliers_credit'
+    | 'promotions'
+    | 'kitchen_drivers'
+    | 'inventory'
+    | 'recipes'
+    | 'master_data'
+    | 'shifts_history'
+    | 'branding'
+    | 'dev_tools';
   onClose: () => void;
   onRefresh: () => void;
   onSettingsUpdated: (newSettings: RestaurantSettings) => void;
@@ -83,6 +100,7 @@ export const AdminPortal: React.FC<Props> = ({
   employees = [],
   vouchers = [],
   isOpen,
+  initialTab,
   onClose,
   onRefresh,
   onSettingsUpdated,
@@ -103,6 +121,7 @@ export const AdminPortal: React.FC<Props> = ({
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
   const [activeTab, setActiveTab] = useState<
+    | 'cloud_vault'
     | 'users_roles'
     | 'partners_staff'
     | 'customers_credit'
@@ -115,7 +134,7 @@ export const AdminPortal: React.FC<Props> = ({
     | 'shifts_history'
     | 'branding'
     | 'dev_tools'
-  >('users_roles');
+  >(initialTab || 'cloud_vault');
 
   if (!isOpen) return null;
 
@@ -232,6 +251,20 @@ export const AdminPortal: React.FC<Props> = ({
 
                 <button
                   type="button"
+                  onClick={() => setActiveTab('cloud_vault')}
+                  className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                    activeTab === 'cloud_vault'
+                      ? 'bg-sky-500 text-slate-950 border-sky-400'
+                      : 'bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border-sky-500/30'
+                  }`}
+                  title="مركز المزامنة السحابية للفروع وخزينة الكلمات السرية"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">السحابة والكلمات السرية</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setActiveTab('dev_tools')}
                   className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
                     activeTab === 'dev_tools'
@@ -275,6 +308,18 @@ export const AdminPortal: React.FC<Props> = ({
 
             {/* Navigation Tabs */}
             <div className="flex items-center gap-1.5 border-b border-slate-800 pb-3 mb-4 text-xs font-semibold overflow-x-auto">
+              <button
+                onClick={() => setActiveTab('cloud_vault')}
+                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                  activeTab === 'cloud_vault'
+                    ? 'bg-sky-500 text-slate-950 font-black border-sky-400'
+                    : 'bg-sky-500/10 text-sky-300 border-sky-500/30 hover:bg-sky-500/20'
+                }`}
+              >
+                <Cloud className="w-4 h-4" />
+                <span>المزامنة السحابية والكلمات السرية</span>
+              </button>
+
               <button
                 onClick={() => setActiveTab('users_roles')}
                 className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
@@ -426,6 +471,14 @@ export const AdminPortal: React.FC<Props> = ({
 
             {/* Tab Content */}
             <div className="flex-1 overflow-y-auto pr-1">
+              {activeTab === 'cloud_vault' && (
+                <CloudSyncAndCredentialsVault
+                  settings={settings}
+                  users={allUsers}
+                  onRefresh={onRefresh}
+                />
+              )}
+
               {activeTab === 'users_roles' && (
                 <UsersRolesManager
                   users={allUsers}

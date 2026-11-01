@@ -25,6 +25,7 @@ import {
   StorageService,
 } from './services/storage';
 import { initDriveAuth } from './services/googleDrive';
+import { CloudSyncService } from './services/firebaseSync';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { OpenShiftModal } from './components/OpenShiftModal';
 import { VoucherModal } from './components/VoucherModal';
@@ -33,6 +34,7 @@ import { CloseShiftModal } from './components/CloseShiftModal';
 import { OrderPrintMode, PrintPreviewDialog } from './components/PrintPreviewDialog';
 import { CashierCreditInvoiceModal } from './components/CashierCreditInvoiceModal';
 import { AdminPortal } from './components/AdminPortal';
+import { RemoteSuperAdminModal } from './components/RemoteSuperAdminModal';
 import { DesktopInstallModal } from './components/DesktopInstallModal';
 import { CashierPOSView } from './components/CashierPOSView';
 import { ShiftTopMealsChart } from './components/ShiftTopMealsChart';
@@ -50,6 +52,7 @@ import {
   CloudOff,
   Edit3,
   Eye,
+  Globe,
   Landmark,
   Lock,
   MonitorDown,
@@ -109,12 +112,21 @@ export default function App() {
   >(undefined);
   const [showCreditInvoiceModal, setShowCreditInvoiceModal] = useState<boolean>(false);
   const [showAdminPortal, setShowAdminPortal] = useState<boolean>(false);
+  const [showRemoteSuperAdmin, setShowRemoteSuperAdmin] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get('mode') === 'remote-admin' ||
+      window.location.hash === '#remote-admin'
+    );
+  });
   const [showUserSwitcherModal, setShowUserSwitcherModal] = useState<boolean>(false);
   const [showBusinessSwitcherModal, setShowBusinessSwitcherModal] = useState<boolean>(false);
 
   // Connectivity & PWA Install
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [driveConnected, setDriveConnected] = useState<boolean>(false);
+  const [cloudConnected, setCloudConnected] = useState<boolean>(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallGuideModal, setShowInstallGuideModal] = useState<boolean>(false);
@@ -158,12 +170,24 @@ export default function App() {
       setVouchers(StorageService.getVouchers());
       setSaleOrders(StorageService.getSaleOrders());
     }
+
+    // Background Auto-Sync to Cloud if online and user signed in
+    if (navigator.onLine && CloudSyncService.isAutoSyncEnabled()) {
+      CloudSyncService.syncActiveBusinessToCloud().catch(() => {
+        // Silent background fallback if not signed in yet
+      });
+    }
   };
 
   useEffect(() => {
     refreshData();
 
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (CloudSyncService.isAutoSyncEnabled()) {
+        CloudSyncService.syncActiveBusinessToCloud().catch(() => {});
+      }
+    };
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -172,6 +196,13 @@ export default function App() {
       () => setDriveConnected(true),
       () => setDriveConnected(false)
     );
+
+    const unsubCloud = CloudSyncService.subscribeAuth((user) => {
+      setCloudConnected(!!user);
+      if (user && navigator.onLine && CloudSyncService.isAutoSyncEnabled()) {
+        CloudSyncService.syncActiveBusinessToCloud().catch(() => {});
+      }
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleBeforeInstall = (e: any) => {
@@ -185,6 +216,7 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       unsub();
+      unsubCloud();
     };
   }, []);
 
@@ -336,14 +368,17 @@ export default function App() {
             <span>{activePerms.labelAr}</span>
           </button>
 
-          <div
-            className={`hidden md:flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${
+          <button
+            type="button"
+            onClick={() => setShowAdminPortal(true)}
+            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-colors cursor-pointer ${
               isOnline
-                ? driveConnected
-                  ? 'bg-sky-500/10 border-sky-500/20 text-sky-400'
-                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                ? cloudConnected || driveConnected
+                  ? 'bg-sky-500/15 border-sky-500/30 text-sky-300 hover:bg-sky-500/25'
+                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
                 : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}
+            title="اضغط لفتح مركز المزامنة السحابية للفروع وخزينة الكلمات السرية"
           >
             {isOnline ? (
               <Cloud className="w-3.5 h-3.5" />
@@ -351,9 +386,15 @@ export default function App() {
               <CloudOff className="w-3.5 h-3.5" />
             )}
             <span className="hidden lg:inline">
-              {isOnline ? (driveConnected ? 'سحابي متصل' : 'أونلاين') : 'أوفلاين محلي'}
+              {isOnline
+                ? cloudConnected
+                  ? 'مزامنة سحابية نشطة'
+                  : driveConnected
+                  ? 'سحابي متصل'
+                  : 'أونلاين (اضغط للربط السحابي)'
+                : 'أوفلاين محلي'}
             </span>
-          </div>
+          </button>
 
           {!isStandalone && (
             <button
@@ -368,11 +409,21 @@ export default function App() {
 
           <button
             type="button"
+            onClick={() => setShowRemoteSuperAdmin(true)}
+            className="flex items-center gap-1.5 py-1.5 px-3 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-black transition-colors cursor-pointer shadow-xs"
+            title="غرفة القيادة المركزية للأدمين العام: مراقبة وإدارة كافة الفروع عن بُعد عبر السحابة"
+          >
+            <Globe className="w-3.5 h-3.5 text-sky-400" />
+            <span>الإدارة عن بُعد (الأدمين العام)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowAdminPortal(true)}
             className="flex items-center gap-1.5 py-1.5 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
           >
             <Shield className="w-3.5 h-3.5" />
-            <span>بوابة الإدارة والمحاسبة</span>
+            <span className="hidden sm:inline">بوابة الإدارة والمحاسبة</span>
           </button>
 
           {activeShift ? (
@@ -1023,6 +1074,14 @@ export default function App() {
             StorageService.resetToOnboarding();
             refreshData();
           }}
+        />
+      )}
+
+      {showRemoteSuperAdmin && (
+        <RemoteSuperAdminModal
+          isOpen={showRemoteSuperAdmin}
+          onClose={() => setShowRemoteSuperAdmin(false)}
+          onRefreshLocal={refreshData}
         />
       )}
     </div>
