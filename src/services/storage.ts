@@ -2,11 +2,14 @@ import * as XLSX from 'xlsx';
 import {
   AccountCategory,
   AppUser,
+  AttendanceRecord,
+  AuditCorrectionLog,
   BusinessBackupBundle,
   Customer,
   DeliveryDriver,
   Employee,
   FinancialContainerType,
+  HRAdjustment,
   InventoryItem,
   KitchenStation,
   MenuItem,
@@ -16,6 +19,7 @@ import {
   PartyType,
   PaymentMethod,
   PaymentStatus,
+  PayrollSettlement,
   Promotion,
   RestaurantSettings,
   RolePermissions,
@@ -50,6 +54,10 @@ const KEYS = {
   ACTIVE_BUSINESS_ID: 'fastrest_active_business_id_v2',
   KITCHEN_STATIONS: 'fastrest_kitchen_stations_v2',
   DELIVERY_DRIVERS: 'fastrest_delivery_drivers_v2',
+  AUDIT_LOGS: 'fastrest_audit_logs_v2',
+  ATTENDANCE_LOGS: 'fastrest_attendance_logs_v2',
+  HR_ADJUSTMENTS: 'fastrest_hr_adjustments_v2',
+  PAYROLL_SETTLEMENTS: 'fastrest_payroll_settlements_v2',
 };
 
 export function getOrderTypeLabel(type?: OrderType): string {
@@ -249,6 +257,8 @@ export function getVoucherTypeLabel(type: VoucherType): string {
       return 'رد / تسوية عهدة موظف';
     case 'credit_purchase':
       return 'فاتورة توريد بضاعة آجل';
+    case 'payroll_payment':
+      return 'صرف راتب ومستحقات شهرية لموظف';
     default:
       return type;
   }
@@ -1118,6 +1128,11 @@ export class StorageService {
       employees: this.getEmployees(),
       kitchenStations: this.getKitchenStations(),
       deliveryDrivers: this.getDeliveryDrivers(),
+      wasteLogs: this.getWasteLogs(),
+      auditLogs: this.getAuditLogs(),
+      attendanceLogs: this.getAttendanceLogs(),
+      hrAdjustments: this.getHRAdjustments(),
+      payrollSettlements: this.getPayrollSettlements(),
     };
   }
 
@@ -1143,6 +1158,11 @@ export class StorageService {
     if (bundle.employees) this.saveEmployees(bundle.employees);
     if (bundle.kitchenStations) this.saveKitchenStations(bundle.kitchenStations);
     if (bundle.deliveryDrivers) this.saveDeliveryDrivers(bundle.deliveryDrivers);
+    if (bundle.wasteLogs) localStorage.setItem(KEYS.WASTE, JSON.stringify(bundle.wasteLogs));
+    if (bundle.auditLogs) this.saveAuditLogs(bundle.auditLogs);
+    if (bundle.attendanceLogs) this.saveAttendanceLogs(bundle.attendanceLogs);
+    if (bundle.hrAdjustments) this.saveHRAdjustments(bundle.hrAdjustments);
+    if (bundle.payrollSettlements) this.savePayrollSettlements(bundle.payrollSettlements);
 
     localStorage.setItem(KEYS.ACTIVE_BUSINESS_ID, bundle.business.id);
   }
@@ -1311,6 +1331,11 @@ export class StorageService {
     this.saveEmployees([]);
     this.saveKitchenStations(DEFAULT_KITCHEN_STATIONS);
     this.saveDeliveryDrivers([]);
+    localStorage.removeItem(KEYS.WASTE);
+    this.saveAuditLogs([]);
+    this.saveAttendanceLogs([]);
+    this.saveHRAdjustments([]);
+    this.savePayrollSettlements([]);
 
     // Save snapshot of this freshly initialized business
     this.saveBusinessSnapshot(newBizId);
@@ -1472,6 +1497,10 @@ export class StorageService {
     this.saveSaleOrders([]);
     this.saveVouchers([]);
     localStorage.removeItem(KEYS.WASTE);
+    this.saveAuditLogs([]);
+    this.saveAttendanceLogs([]);
+    this.saveHRAdjustments([]);
+    this.savePayrollSettlements([]);
 
     // Reset driver custody
     const drivers = this.getDeliveryDrivers();
@@ -2111,6 +2140,8 @@ export class StorageService {
         ? 'ADV'
         : payload.type === 'staff_custody_settlement'
         ? 'CST'
+        : payload.type === 'payroll_payment'
+        ? 'PAY'
         : 'REC';
 
     const voucherNumber = `${prefix}-${String(all.length + 1).padStart(4, '0')}`;
@@ -2675,7 +2706,9 @@ export class StorageService {
 
   // --- Shift Cash Calculation ---
   static calculateShiftCash(shift: Shift): ShiftCashCalculation {
-    const vouchers = this.getVouchers(shift.id);
+    const vouchers = this.getVouchers(shift.id).filter(
+      (v) => !v.isReversed && !v.reversesVoucherId
+    );
     // Only cash movements targeting the shift drawer (or legacy undefined) impact drawer cash
     const drawerVouchers = vouchers.filter(
       (v) => !v.financialContainer || v.financialContainer === 'shift_drawer'
@@ -2697,7 +2730,8 @@ export class StorageService {
           v.type === 'expense' ||
           v.type === 'supplier_payment' ||
           v.type === 'staff_advance' ||
-          v.type === 'partner_drawing'
+          v.type === 'partner_drawing' ||
+          v.type === 'payroll_payment'
       )
       .reduce((sum, v) => sum + v.amount, 0);
 
@@ -2837,7 +2871,714 @@ export class StorageService {
       'الورديات'
     );
 
+    const auditLogs = this.getAuditLogs();
+    if (auditLogs.length > 0) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          auditLogs.map((a) => ({
+            رقم_القيد_العكسي: a.correctionNumber,
+            التاريخ: a.date,
+            الوقت: a.time,
+            النوع: a.targetType,
+            المستند_الأصلي: a.originalRecordNumber,
+            القيمة: a.amountMinor / 100,
+            السبب: a.reason,
+            المنفذ: a.performedByName,
+            التفاصيل: a.detailsSummary,
+          }))
+        ),
+        'سجل_التصحيحات_والقيود'
+      );
+    }
+
+    const payrolls = this.getPayrollSettlements();
+    if (payrolls.length > 0) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          payrolls.map((p) => ({
+            رقم_المسير: p.payrollNumber,
+            الشهر: p.month,
+            الموظف: p.employeeName,
+            الوظيفة: p.jobTitle,
+            الراتب_الأساسي: p.baseSalaryMinor / 100,
+            المكافآت: p.bonusesMinor / 100,
+            العمولات: p.commissionsMinor / 100,
+            الإضافي: p.overtimeMinor / 100,
+            الجزاءات: p.deductionsMinor / 100,
+            خصم_السلف: p.advancesDeductedMinor / 100,
+            صافي_المنصرف: p.netPaidMinor / 100,
+            الوعاء_المالي: getFinancialContainerLabel(p.financialContainer),
+            رقم_سند_الصرف: p.voucherNumber,
+          }))
+        ),
+        'مسير_الرواتب'
+      );
+    }
+
     XLSX.writeFile(wb, `FastRest_POS_Report_${getTodayDateString()}.xlsx`);
+  }
+
+  // --- Audit & Accounting Error Correction Engine ---
+  static getAuditLogs(): AuditCorrectionLog[] {
+    try {
+      const raw = localStorage.getItem(KEYS.AUDIT_LOGS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveAuditLogs(logs: AuditCorrectionLog[]): void {
+    localStorage.setItem(KEYS.AUDIT_LOGS, JSON.stringify(logs));
+  }
+
+  static reverseSaleOrder(params: {
+    orderId: string;
+    reason: string;
+    restoreInventory: boolean;
+    performedByName: string;
+  }): AuditCorrectionLog {
+    const orders = this.getSaleOrders();
+    const order = orders.find((o) => o.id === params.orderId);
+    if (!order) {
+      throw new Error('الفاتورة المطلوب عكسها غير موجودة.');
+    }
+    if (order.isReversed) {
+      throw new Error('تم إجراء قيد عكسي لهذه الفاتورة مسبقاً.');
+    }
+    const cleanReason = params.reason.trim();
+    if (!cleanReason) {
+      throw new Error('يرجى كتابة سبب محاسبي واضح لعكس الفاتورة.');
+    }
+
+    const settings = this.getSettings();
+    const isRetail = settings.businessType === 'retail';
+    const menuItems = this.getMenuItems();
+
+    // 1. Restore Inventory Stock if requested
+    if (params.restoreInventory) {
+      const updatedInventory = [...this.getInventory()];
+      for (const line of order.lines) {
+        if (isRetail) {
+          const idx = updatedInventory.findIndex((i) => i.id === line.menuItemId);
+          if (idx !== -1) {
+            updatedInventory[idx] = {
+              ...updatedInventory[idx],
+              currentStock: Number((updatedInventory[idx].currentStock + line.qty).toFixed(3)),
+              lastUpdated: getTodayDateString(),
+            };
+          }
+        } else {
+          const dish = menuItems.find((m) => m.id === line.menuItemId);
+          if (dish && dish.ingredients) {
+            for (const ing of dish.ingredients) {
+              const idx = updatedInventory.findIndex((i) => i.id === ing.inventoryItemId);
+              if (idx !== -1) {
+                const addQty = ing.qty * line.qty;
+                updatedInventory[idx] = {
+                  ...updatedInventory[idx],
+                  currentStock: Number((updatedInventory[idx].currentStock + addQty).toFixed(3)),
+                  lastUpdated: getTodayDateString(),
+                };
+              }
+            }
+          }
+        }
+      }
+      this.saveInventory(updatedInventory);
+    }
+
+    // 2. Reverse Shift Sales Bucket if order was paid
+    if (order.paymentStatus === 'paid') {
+      const shifts = this.getShifts();
+      const updatedShifts = shifts.map((sh) => {
+        if (sh.id !== order.shiftId) return sh;
+        return {
+          ...sh,
+          cashSales:
+            order.paymentMethod === 'cash'
+              ? Math.max(0, sh.cashSales - order.totalAmount)
+              : sh.cashSales,
+          visaSales:
+            order.paymentMethod === 'visa'
+              ? Math.max(0, sh.visaSales - order.totalAmount)
+              : sh.visaSales,
+          instapaySales:
+            order.paymentMethod === 'instapay'
+              ? Math.max(0, (sh.instapaySales || 0) - order.totalAmount)
+              : sh.instapaySales || 0,
+          ewalletSales:
+            order.paymentMethod === 'ewallet'
+              ? Math.max(0, (sh.ewalletSales || 0) - order.totalAmount)
+              : sh.ewalletSales || 0,
+          creditSales:
+            order.paymentMethod === 'credit'
+              ? Math.max(0, (sh.creditSales || 0) - order.totalAmount)
+              : sh.creditSales || 0,
+        };
+      });
+      this.saveShifts(updatedShifts);
+
+      // Reverse Customer Debt if credit sale
+      if (order.paymentMethod === 'credit' && order.customerId) {
+        const customers = this.getCustomers();
+        this.saveCustomers(
+          customers.map((c) =>
+            c.id === order.customerId
+              ? { ...c, currentDebt: Math.max(0, c.currentDebt - order.totalAmount) }
+              : c
+          )
+        );
+      }
+    } else if (order.deliveryDriverId && order.paymentMethod === 'cash') {
+      // Unpaid order out with delivery driver: reduce driver custody
+      const drivers = this.getDeliveryDrivers();
+      this.saveDeliveryDrivers(
+        drivers.map((d) =>
+          d.id === order.deliveryDriverId
+            ? {
+                ...d,
+                cashInCustodyMinor: Math.max(0, d.cashInCustodyMinor - order.totalAmount),
+                currentOrdersCount: Math.max(0, d.currentOrdersCount - 1),
+              }
+            : d
+        )
+      );
+    }
+
+    const activeUser = this.getActiveUser();
+    const auditLogs = this.getAuditLogs();
+    const correctionNumber = `REV-INV-${String(auditLogs.length + 1).padStart(4, '0')}`;
+    const today = getTodayDateString();
+    const nowTime = getCurrentTimeString();
+
+    const updatedOrders = orders.map((o) =>
+      o.id === order.id
+        ? {
+            ...o,
+            orderStatus: 'cancelled' as OrderStatus,
+            isReversed: true,
+            reversedAt: `${today} ${nowTime}`,
+            reversedBy: params.performedByName,
+            reversalReason: cleanReason,
+            inventoryRestoredOnReversal: params.restoreInventory,
+          }
+        : o
+    );
+    this.saveSaleOrders(updatedOrders);
+
+    const logEntry: AuditCorrectionLog = {
+      id: `aud-${Date.now()}`,
+      correctionNumber,
+      date: today,
+      time: nowTime,
+      targetType: 'sale_order',
+      originalRecordId: order.id,
+      originalRecordNumber: order.orderNumber,
+      reversalRecordNumber: correctionNumber,
+      amountMinor: order.totalAmount,
+      reason: cleanReason,
+      performedByName: params.performedByName,
+      performedByRole: activeUser.role,
+      inventoryRestored: params.restoreInventory,
+      detailsSummary: `إلغاء وقيد عكسي للفاتورة ${order.orderNumber} (${getPaymentMethodLabel(
+        order.paymentMethod
+      )}) بقيمة ${formatCurrency(order.totalAmount, settings.currency)} — ${
+        params.restoreInventory ? 'مع إعادة الخامات للمخزن' : 'بدون إعادة للمخزن (هالك)'
+      }`,
+    };
+
+    this.saveAuditLogs([logEntry, ...auditLogs]);
+    return logEntry;
+  }
+
+  static reverseVoucher(params: {
+    voucherId: string;
+    reason: string;
+    performedByName: string;
+  }): AuditCorrectionLog {
+    const vouchers = this.getVouchers();
+    const orig = vouchers.find((v) => v.id === params.voucherId);
+    if (!orig) {
+      throw new Error('السند المطلوب عكسه غير موجود.');
+    }
+    if (orig.isReversed || orig.reversesVoucherId) {
+      throw new Error('هذا السند معكوس مسبقاً أو يمثل قيداً عكسياً لا يمكن عكسه مرة أخرى.');
+    }
+    const cleanReason = params.reason.trim();
+    if (!cleanReason) {
+      throw new Error('يرجى كتابة سبب محاسبي واضح لعكس السند.');
+    }
+
+    const settings = this.getSettings();
+    const today = getTodayDateString();
+    const nowTime = getCurrentTimeString();
+
+    // 1. Reverse Party Balance Impact
+    if (orig.supplierId) {
+      const suppliers = this.getSuppliers();
+      this.saveSuppliers(
+        suppliers.map((sup) => {
+          if (sup.id !== orig.supplierId) return sup;
+          if (orig.type === 'credit_purchase') {
+            return { ...sup, creditBalance: Math.max(0, sup.creditBalance - orig.amount) };
+          }
+          if (orig.type === 'supplier_payment') {
+            return { ...sup, creditBalance: sup.creditBalance + orig.amount };
+          }
+          return sup;
+        })
+      );
+    }
+
+    if (orig.customerId && orig.type === 'customer_collection') {
+      const customers = this.getCustomers();
+      this.saveCustomers(
+        customers.map((cust) =>
+          cust.id === orig.customerId
+            ? { ...cust, currentDebt: cust.currentDebt + orig.amount }
+            : cust
+        )
+      );
+    }
+
+    if (orig.partnerId) {
+      const partners = this.getPartners();
+      this.savePartners(
+        partners.map((prt) => {
+          if (prt.id !== orig.partnerId) return prt;
+          if (orig.type === 'partner_drawing') {
+            return {
+              ...prt,
+              totalDrawings: Math.max(0, prt.totalDrawings - orig.amount),
+              currentBalance: prt.currentBalance + orig.amount,
+            };
+          }
+          if (orig.type === 'partner_deposit') {
+            return {
+              ...prt,
+              totalDeposits: Math.max(0, prt.totalDeposits - orig.amount),
+              currentBalance: prt.currentBalance - orig.amount,
+            };
+          }
+          return prt;
+        })
+      );
+    }
+
+    if (orig.employeeId) {
+      const employees = this.getEmployees();
+      this.saveEmployees(
+        employees.map((emp) => {
+          if (emp.id !== orig.employeeId) return emp;
+          if (orig.type === 'staff_advance') {
+            return {
+              ...emp,
+              currentAdvances: Math.max(0, emp.currentAdvances - orig.amount),
+            };
+          }
+          if (orig.type === 'staff_custody_settlement') {
+            return {
+              ...emp,
+              currentAdvances: emp.currentAdvances + orig.amount,
+            };
+          }
+          return emp;
+        })
+      );
+    }
+
+    const activeUser = this.getActiveUser();
+    const auditLogs = this.getAuditLogs();
+    const correctionNumber = `REV-VCH-${String(auditLogs.length + 1).padStart(4, '0')}`;
+    const reversalVoucherId = `vch-rev-${Date.now()}`;
+
+    const isOutflow =
+      orig.type === 'expense' ||
+      orig.type === 'supplier_payment' ||
+      orig.type === 'staff_advance' ||
+      orig.type === 'partner_drawing' ||
+      orig.type === 'payroll_payment';
+
+    const reversalVoucher: Voucher = {
+      id: reversalVoucherId,
+      voucherNumber: correctionNumber,
+      shiftId: orig.shiftId,
+      type: isOutflow ? 'receipt' : 'expense',
+      date: today,
+      time: nowTime,
+      amount: orig.amount,
+      accountCode: orig.accountCode,
+      accountName: `[قيد عكسي] ${orig.accountName}`,
+      recipient: orig.recipient,
+      description: `قيد عكسي لإلغاء السند رقم (${orig.voucherNumber}) — السبب: ${cleanReason}`,
+      cashierName: params.performedByName,
+      partyType: orig.partyType,
+      partyId: orig.partyId,
+      supplierId: orig.supplierId,
+      customerId: orig.customerId,
+      partnerId: orig.partnerId,
+      employeeId: orig.employeeId,
+      financialContainer: orig.financialContainer || 'shift_drawer',
+      performedByUserId: activeUser.id,
+      performedByRole: activeUser.role,
+      reversesVoucherId: orig.id,
+    };
+
+    const updatedVouchers = vouchers.map((v) =>
+      v.id === orig.id
+        ? {
+            ...v,
+            isReversed: true,
+            reversedAt: `${today} ${nowTime}`,
+            reversedBy: params.performedByName,
+            reversalReason: cleanReason,
+            reversedByVoucherId: reversalVoucherId,
+          }
+        : v
+    );
+
+    this.saveVouchers([reversalVoucher, ...updatedVouchers]);
+
+    const logEntry: AuditCorrectionLog = {
+      id: `aud-${Date.now()}`,
+      correctionNumber,
+      date: today,
+      time: nowTime,
+      targetType: 'voucher',
+      originalRecordId: orig.id,
+      originalRecordNumber: orig.voucherNumber,
+      reversalRecordNumber: correctionNumber,
+      amountMinor: orig.amount,
+      reason: cleanReason,
+      performedByName: params.performedByName,
+      performedByRole: activeUser.role,
+      detailsSummary: `قيد عكسي للسند ${orig.voucherNumber} (${getVoucherTypeLabel(
+        orig.type
+      )}) بقيمة ${formatCurrency(orig.amount, settings.currency)} على وعاء (${getFinancialContainerLabel(
+        orig.financialContainer
+      )})`,
+    };
+
+    this.saveAuditLogs([logEntry, ...auditLogs]);
+    return logEntry;
+  }
+
+  static adjustInventoryWithAudit(params: {
+    itemId: string;
+    newStock: number;
+    newUnitCostMinor: number;
+    reason: string;
+    performedByName: string;
+  }): AuditCorrectionLog {
+    const inv = this.getInventory();
+    const item = inv.find((i) => i.id === params.itemId);
+    if (!item) {
+      throw new Error('الصنف غير موجود في المخزن.');
+    }
+    const cleanReason = params.reason.trim();
+    if (!cleanReason) {
+      throw new Error('يرجى كتابة سبب التسوية الجردية.');
+    }
+
+    const oldStock = item.currentStock;
+    const oldCost = item.unitCost;
+    const stockDiff = Number((params.newStock - oldStock).toFixed(3));
+    const financialImpactMinor = Math.round(Math.abs(stockDiff) * params.newUnitCostMinor);
+
+    const updatedInv = inv.map((i) =>
+      i.id === item.id
+        ? {
+            ...i,
+            currentStock: Math.max(0, Number(params.newStock.toFixed(3))),
+            unitCost: Math.max(0, Math.round(params.newUnitCostMinor)),
+            lastUpdated: getTodayDateString(),
+          }
+        : i
+    );
+    this.saveInventory(updatedInv);
+
+    const activeUser = this.getActiveUser();
+    const auditLogs = this.getAuditLogs();
+    const correctionNumber = `REV-INV-ADJ-${String(auditLogs.length + 1).padStart(4, '0')}`;
+    const today = getTodayDateString();
+    const nowTime = getCurrentTimeString();
+
+    const logEntry: AuditCorrectionLog = {
+      id: `aud-${Date.now()}`,
+      correctionNumber,
+      date: today,
+      time: nowTime,
+      targetType: 'inventory',
+      originalRecordId: item.id,
+      originalRecordNumber: item.code,
+      reversalRecordNumber: correctionNumber,
+      amountMinor: financialImpactMinor,
+      reason: cleanReason,
+      performedByName: params.performedByName,
+      performedByRole: activeUser.role,
+      detailsSummary: `تسوية مخزنية للصنف (${item.name}): الرصيد من ${oldStock} إلى ${
+        params.newStock
+      } ${item.unit} | التكلفة من ${oldCost / 100} إلى ${params.newUnitCostMinor / 100}`,
+    };
+
+    this.saveAuditLogs([logEntry, ...auditLogs]);
+    return logEntry;
+  }
+
+  // --- HR, Attendance, Performance Commissions & Monthly Payroll Engine ---
+  static getAttendanceLogs(): AttendanceRecord[] {
+    try {
+      const raw = localStorage.getItem(KEYS.ATTENDANCE_LOGS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveAttendanceLogs(logs: AttendanceRecord[]): void {
+    localStorage.setItem(KEYS.ATTENDANCE_LOGS, JSON.stringify(logs));
+  }
+
+  static recordAttendanceCheckIn(params: {
+    employeeId: string;
+    date?: string;
+    checkInTime?: string;
+    lateMinutes?: number;
+    status?: 'present' | 'late' | 'absent' | 'leave';
+    notes?: string;
+  }): AttendanceRecord {
+    const employees = this.getEmployees();
+    const emp = employees.find((e) => e.id === params.employeeId);
+    if (!emp) throw new Error('الموظف غير موجود');
+
+    const date = params.date || getTodayDateString();
+    const checkInTime = params.checkInTime || getCurrentTimeString();
+    const activeShift = this.getActiveShift();
+    const logs = this.getAttendanceLogs();
+
+    const record: AttendanceRecord = {
+      id: `att-${Date.now()}`,
+      employeeId: emp.id,
+      employeeName: emp.name,
+      jobTitle: emp.jobTitle,
+      date,
+      checkInTime,
+      workedHours: emp.shiftHoursPerDay || 8,
+      lateMinutes: params.lateMinutes || 0,
+      overtimeHours: 0,
+      status: params.status || ((params.lateMinutes || 0) > 0 ? 'late' : 'present'),
+      shiftId: activeShift?.id,
+      notes: params.notes?.trim() || undefined,
+    };
+
+    this.saveAttendanceLogs([record, ...logs]);
+    return record;
+  }
+
+  static recordAttendanceCheckOut(params: {
+    attendanceId: string;
+    checkOutTime?: string;
+    workedHours?: number;
+    overtimeHours?: number;
+  }): void {
+    const logs = this.getAttendanceLogs();
+    const checkOutTime = params.checkOutTime || getCurrentTimeString();
+    const updated = logs.map((rec) => {
+      if (rec.id !== params.attendanceId) return rec;
+      let computedHours = params.workedHours ?? rec.workedHours;
+      if (params.workedHours === undefined && rec.checkInTime && checkOutTime) {
+        const [inH, inM] = rec.checkInTime.split(':').map(Number);
+        const [outH, outM] = checkOutTime.split(':').map(Number);
+        if (!isNaN(inH) && !isNaN(outH)) {
+          let diff = outH + outM / 60 - (inH + inM / 60);
+          if (diff < 0) diff += 24;
+          computedHours = Number(diff.toFixed(1));
+        }
+      }
+      return {
+        ...rec,
+        checkOutTime,
+        workedHours: computedHours,
+        overtimeHours: params.overtimeHours ?? rec.overtimeHours,
+      };
+    });
+    this.saveAttendanceLogs(updated);
+  }
+
+  static deleteAttendanceRecord(id: string): void {
+    const logs = this.getAttendanceLogs();
+    this.saveAttendanceLogs(logs.filter((l) => l.id !== id));
+  }
+
+  static getHRAdjustments(): HRAdjustment[] {
+    try {
+      const raw = localStorage.getItem(KEYS.HR_ADJUSTMENTS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveHRAdjustments(list: HRAdjustment[]): void {
+    localStorage.setItem(KEYS.HR_ADJUSTMENTS, JSON.stringify(list));
+  }
+
+  static addHRAdjustment(params: {
+    employeeId: string;
+    type: 'bonus' | 'deduction' | 'commission' | 'overtime_pay';
+    amountMinor: number;
+    reason: string;
+    month?: string;
+    recordedBy: string;
+  }): HRAdjustment {
+    const employees = this.getEmployees();
+    const emp = employees.find((e) => e.id === params.employeeId);
+    if (!emp) throw new Error('الموظف غير موجود');
+
+    const today = getTodayDateString();
+    const month = params.month || today.slice(0, 7);
+    const list = this.getHRAdjustments();
+
+    const item: HRAdjustment = {
+      id: `hra-${Date.now()}`,
+      employeeId: emp.id,
+      employeeName: emp.name,
+      date: today,
+      month,
+      type: params.type,
+      amountMinor: Math.max(0, Math.round(params.amountMinor)),
+      reason: params.reason.trim(),
+      recordedBy: params.recordedBy,
+      isSettledInPayroll: false,
+    };
+
+    this.saveHRAdjustments([item, ...list]);
+    return item;
+  }
+
+  static deleteHRAdjustment(id: string): void {
+    const list = this.getHRAdjustments();
+    this.saveHRAdjustments(list.filter((i) => i.id !== id));
+  }
+
+  static getPayrollSettlements(): PayrollSettlement[] {
+    try {
+      const raw = localStorage.getItem(KEYS.PAYROLL_SETTLEMENTS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static savePayrollSettlements(list: PayrollSettlement[]): void {
+    localStorage.setItem(KEYS.PAYROLL_SETTLEMENTS, JSON.stringify(list));
+  }
+
+  static settleEmployeePayroll(params: {
+    employeeId: string;
+    month: string; // YYYY-MM
+    baseSalaryMinor: number;
+    bonusesMinor: number;
+    commissionsMinor: number;
+    overtimeMinor: number;
+    deductionsMinor: number;
+    advancesDeductedMinor: number;
+    financialContainer: FinancialContainerType;
+    paidBy: string;
+    notes?: string;
+  }): PayrollSettlement {
+    const employees = this.getEmployees();
+    const emp = employees.find((e) => e.id === params.employeeId);
+    if (!emp) throw new Error('الموظف غير موجود');
+
+    const gross =
+      params.baseSalaryMinor +
+      params.bonusesMinor +
+      params.commissionsMinor +
+      params.overtimeMinor;
+    const totalDeductions = params.deductionsMinor + params.advancesDeductedMinor;
+    const netPaidMinor = Math.max(0, gross - totalDeductions);
+
+    const activeShift = this.getActiveShift();
+    const shiftId = activeShift ? activeShift.id : 'admin-vault';
+
+    // 1. Issue Treasury Expense Voucher for netPaidMinor
+    const voucher = this.addVoucher({
+      shiftId,
+      type: 'payroll_payment',
+      amount: netPaidMinor,
+      accountCode: 'EXP-102',
+      accountName: 'أجور ومرتبات وسلف العاملين',
+      recipient: emp.name,
+      description: `صرف صافي راتب شهر (${params.month}) للموظف ${emp.name} (${emp.jobTitle})${
+        params.advancesDeductedMinor > 0
+          ? ` — بعد خصم سلف بقيمة ${params.advancesDeductedMinor / 100}`
+          : ''
+      }`,
+      cashierName: params.paidBy,
+      partyType: 'employee',
+      partyId: emp.id,
+      employeeId: emp.id,
+      financialContainer: params.financialContainer,
+    });
+
+    // 2. Deduct settled advances from employee.currentAdvances
+    if (params.advancesDeductedMinor > 0) {
+      const refreshedEmployees = this.getEmployees();
+      this.saveEmployees(
+        refreshedEmployees.map((e) =>
+          e.id === emp.id
+            ? {
+                ...e,
+                currentAdvances: Math.max(0, e.currentAdvances - params.advancesDeductedMinor),
+              }
+            : e
+        )
+      );
+    }
+
+    const payrolls = this.getPayrollSettlements();
+    const payrollNumber = `PAY-${params.month}-${String(payrolls.length + 1).padStart(3, '0')}`;
+    const settlementId = `pay-${Date.now()}`;
+
+    // 3. Mark unsettled HR adjustments of this employee in this month as settled
+    const adjustments = this.getHRAdjustments();
+    this.saveHRAdjustments(
+      adjustments.map((adj) =>
+        adj.employeeId === emp.id && adj.month === params.month && !adj.isSettledInPayroll
+          ? { ...adj, isSettledInPayroll: true, payrollId: settlementId }
+          : adj
+      )
+    );
+
+    const settlement: PayrollSettlement = {
+      id: settlementId,
+      payrollNumber,
+      employeeId: emp.id,
+      employeeName: emp.name,
+      jobTitle: emp.jobTitle,
+      month: params.month,
+      date: getTodayDateString(),
+      time: getCurrentTimeString(),
+      baseSalaryMinor: params.baseSalaryMinor,
+      bonusesMinor: params.bonusesMinor,
+      commissionsMinor: params.commissionsMinor,
+      overtimeMinor: params.overtimeMinor,
+      deductionsMinor: params.deductionsMinor,
+      advancesDeductedMinor: params.advancesDeductedMinor,
+      netPaidMinor,
+      financialContainer: params.financialContainer,
+      voucherId: voucher.id,
+      voucherNumber: voucher.voucherNumber,
+      paidBy: params.paidBy,
+      notes: params.notes,
+    };
+
+    this.savePayrollSettlements([settlement, ...payrolls]);
+    return settlement;
   }
 
   // --- Production Single-Branch Lock (Tenant Isolation) ---
@@ -2855,8 +3596,6 @@ export class StorageService {
     if (businesses.some((b) => b.id === branchId)) {
       this.switchBusiness(branchId);
     } else {
-      // Brand-new branch PC opening ?branch=<branchId> for the first time:
-      // Initialize a clean slot for this branchId (with isOnboarded: false) so it never shows demo data
       const currentBizId = this.getActiveBusinessId();
       this.saveBusinessSnapshot(currentBizId);
 
@@ -2939,6 +3678,11 @@ export class StorageService {
       this.saveEmployees([]);
       this.saveKitchenStations(DEFAULT_KITCHEN_STATIONS);
       this.saveDeliveryDrivers([]);
+      localStorage.removeItem(KEYS.WASTE);
+      this.saveAuditLogs([]);
+      this.saveAttendanceLogs([]);
+      this.saveHRAdjustments([]);
+      this.savePayrollSettlements([]);
       this.saveBusinessSnapshot(branchId);
     }
   }

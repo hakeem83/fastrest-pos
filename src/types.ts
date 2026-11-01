@@ -52,7 +52,8 @@ export type VoucherType =
   | 'partner_drawing'
   | 'partner_deposit'
   | 'staff_advance'
-  | 'staff_custody_settlement';
+  | 'staff_custody_settlement'
+  | 'payroll_payment';
 
 export type PaymentMethod = 'cash' | 'visa' | 'instapay' | 'ewallet' | 'credit';
 
@@ -115,6 +116,13 @@ export interface Employee {
   custodyBalance: number; // minor units (عهدة مشتريات مؤقتة طرف الموظف)
   isActive: boolean;
   notes?: string;
+  nationalId?: string;
+  hireDate?: string;
+  shiftHoursPerDay?: number; // default 8 or 10
+  commissionRatePercent?: number; // e.g. 1.5 for 1.5% of sales
+  perDeliveryCommissionMinor?: number; // e.g. 500 for 5 EGP per delivered order
+  linkedUserId?: string;
+  linkedDriverId?: string;
 }
 
 export interface RestaurantSettings {
@@ -166,6 +174,11 @@ export interface BusinessBackupBundle {
   employees: Employee[];
   kitchenStations?: KitchenStation[];
   deliveryDrivers?: DeliveryDriver[];
+  wasteLogs?: WasteLog[];
+  auditLogs?: AuditCorrectionLog[];
+  attendanceLogs?: AttendanceRecord[];
+  hrAdjustments?: HRAdjustment[];
+  payrollSettlements?: PayrollSettlement[];
 }
 
 export interface AccountCategory {
@@ -202,6 +215,12 @@ export interface Voucher {
   performedByRole?: UserRole;
   approvedByUserName?: string;
   invoiceNo?: string;
+  isReversed?: boolean;
+  reversedAt?: string;
+  reversedBy?: string;
+  reversalReason?: string;
+  reversedByVoucherId?: string;
+  reversesVoucherId?: string;
 }
 
 export interface Shift {
@@ -390,5 +409,81 @@ export interface SaleOrder {
   kotPrintTime?: string;
   kotPrintCount?: number;
   dailySequenceNumber?: number; // رقم تسلسلي بسيط للنداء مثلا #1, #2...
+  isReversed?: boolean;
+  reversedAt?: string;
+  reversedBy?: string;
+  reversalReason?: string;
+  inventoryRestoredOnReversal?: boolean;
 }
+
+export interface AuditCorrectionLog {
+  id: string;
+  correctionNumber: string; // e.g. REV-0001
+  date: string;
+  time: string;
+  targetType: 'sale_order' | 'voucher' | 'inventory' | 'shift';
+  originalRecordId: string;
+  originalRecordNumber: string;
+  reversalRecordNumber?: string;
+  amountMinor: number; // financial impact in minor units
+  reason: string;
+  performedByName: string;
+  performedByRole?: UserRole;
+  inventoryRestored?: boolean;
+  detailsSummary: string;
+}
+
+export interface AttendanceRecord {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  jobTitle?: string;
+  date: string;
+  checkInTime: string;
+  checkOutTime?: string;
+  workedHours: number;
+  lateMinutes: number;
+  overtimeHours: number;
+  status: 'present' | 'late' | 'absent' | 'leave';
+  shiftId?: string;
+  notes?: string;
+}
+
+export interface HRAdjustment {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  month: string; // YYYY-MM
+  type: 'bonus' | 'deduction' | 'commission' | 'overtime_pay';
+  amountMinor: number;
+  reason: string;
+  recordedBy: string;
+  isSettledInPayroll?: boolean;
+  payrollId?: string;
+}
+
+export interface PayrollSettlement {
+  id: string;
+  payrollNumber: string; // PAY-2026-11-01
+  employeeId: string;
+  employeeName: string;
+  jobTitle: string;
+  month: string; // YYYY-MM
+  date: string;
+  time: string;
+  baseSalaryMinor: number;
+  bonusesMinor: number;
+  commissionsMinor: number;
+  overtimeMinor: number;
+  deductionsMinor: number;
+  advancesDeductedMinor: number;
+  netPaidMinor: number;
+  financialContainer: FinancialContainerType;
+  voucherId: string;
+  voucherNumber: string;
+  paidBy: string;
+  notes?: string;
+}
+
 

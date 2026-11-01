@@ -26,9 +26,14 @@ import { PartnersAndStaffLedger } from './PartnersAndStaffLedger';
 import { DeveloperDataTools } from './DeveloperDataTools';
 import { KitchenAndDriversManager } from './KitchenAndDriversManager';
 import { CloudSyncAndCredentialsVault } from './CloudSyncAndCredentialsVault';
+import { FinancialReportsCenter } from './FinancialReportsCenter';
+import { ErrorCorrectionHub } from './ErrorCorrectionHub';
+import { HRManagementSuite } from './HRManagementSuite';
 import {
+  BarChart3,
   Bike,
   BookOpen,
+  Briefcase,
   Building2,
   ChefHat,
   Cloud,
@@ -42,6 +47,7 @@ import {
   Package,
   RotateCcw,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   Ticket,
   UserCheck,
@@ -65,6 +71,9 @@ interface Props {
   isOpen: boolean;
   initialTab?:
     | 'cloud_vault'
+    | 'financial_reports'
+    | 'error_correction'
+    | 'hr_management'
     | 'users_roles'
     | 'partners_staff'
     | 'customers_credit'
@@ -132,6 +141,9 @@ export const AdminPortal: React.FC<Props> = ({
 
   const [activeTab, setActiveTab] = useState<
     | 'cloud_vault'
+    | 'financial_reports'
+    | 'error_correction'
+    | 'hr_management'
     | 'users_roles'
     | 'partners_staff'
     | 'customers_credit'
@@ -145,8 +157,7 @@ export const AdminPortal: React.FC<Props> = ({
     | 'branding'
     | 'dev_tools'
   >(
-    initialTab ||
-      (canViewPlatformSuperAdminTools ? 'cloud_vault' : 'shifts_history')
+    initialTab || 'financial_reports'
   );
 
   if (!isOpen) return null;
@@ -348,6 +359,42 @@ export const AdminPortal: React.FC<Props> = ({
                 </button>
               )}
 
+              <button
+                onClick={() => setActiveTab('financial_reports')}
+                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                  activeTab === 'financial_reports'
+                    ? 'bg-emerald-500 text-slate-950 font-black border-emerald-400'
+                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span>التقارير المالية والأرباح (P&L · COGS)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('error_correction')}
+                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                  activeTab === 'error_correction'
+                    ? 'bg-rose-500 text-white font-black border-rose-400'
+                    : 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
+                }`}
+              >
+                <ShieldAlert className="w-4 h-4" />
+                <span>تصحيح الأخطاء والقيود العكسية</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('hr_management')}
+                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
+                  activeTab === 'hr_management'
+                    ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
+                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                }`}
+              >
+                <Briefcase className="w-4 h-4" />
+                <span>الموارد البشرية والرواتب والعمولات</span>
+              </button>
+
               {currentPerms.canManageUsersAndRoles && (
                 <button
                   onClick={() => setActiveTab('users_roles')}
@@ -512,6 +559,34 @@ export const AdminPortal: React.FC<Props> = ({
                   settings={settings}
                   users={allUsers}
                   onRefresh={onRefresh}
+                />
+              )}
+
+              {activeTab === 'financial_reports' && (
+                <FinancialReportsCenter
+                  currency={settings.currency}
+                  inventory={inventory}
+                  menuItems={menuItems}
+                  shifts={shifts}
+                />
+              )}
+
+              {activeTab === 'error_correction' && (
+                <ErrorCorrectionHub
+                  currency={settings.currency}
+                  activeUser={currentUser}
+                  inventory={inventory}
+                  onRefresh={onRefresh}
+                />
+              )}
+
+              {activeTab === 'hr_management' && (
+                <HRManagementSuite
+                  currency={settings.currency}
+                  activeUser={currentUser}
+                  employees={allEmployees}
+                  onRefresh={onRefresh}
+                  onVoucherCreated={onVoucherCreated}
                 />
               )}
 
