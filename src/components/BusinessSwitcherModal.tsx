@@ -1,19 +1,31 @@
 import React, { useRef, useState } from 'react';
-import { BusinessType, RestaurantSettings, TenantBusiness } from '../types';
-import { StorageService } from '../services/storage';
+import {
+  BusinessSpecialtyProfile,
+  BusinessType,
+  RestaurantSettings,
+  TenantBusiness,
+} from '../types';
+import { getSpecialtyProfileLabel, StorageService } from '../services/storage';
 import {
   AlertTriangle,
   Building2,
   CheckCircle2,
   Download,
   FolderSync,
+  Heart,
+  Pill,
   PlusCircle,
   RotateCcw,
+  Scissors,
+  Share2,
+  Shirt,
+  Smartphone,
   Sparkles,
   Store,
   Trash2,
   Upload,
   UtensilsCrossed,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -41,7 +53,7 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
   // New business form state
   const [newBizName, setNewBizName] = useState('');
   const [newBizBranch, setNewBizBranch] = useState('الفرع الرئيسي');
-  const [newBizType, setNewBizType] = useState<BusinessType>('restaurant');
+  const [newBizProfile, setNewBizProfile] = useState<BusinessSpecialtyProfile>('restaurant');
   const [newBizCurrency, setNewBizCurrency] = useState('ج.م');
   const [newBizPhone, setNewBizPhone] = useState('');
   const [newBizAddress, setNewBizAddress] = useState('');
@@ -85,10 +97,13 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
     }
 
     try {
+      const mappedType: BusinessType =
+        newBizProfile === 'restaurant' ? 'restaurant' : 'retail';
       const created = StorageService.createNewBusiness({
         name: newBizName,
         branchName: newBizBranch,
-        businessType: newBizType,
+        businessType: mappedType,
+        specialtyProfile: newBizProfile,
         currency: newBizCurrency,
         phone: newBizPhone,
         address: newBizAddress,
@@ -127,6 +142,25 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
       showMsg('تم تصدير ملف النسخة الاحتياطية بنجاح بصيغة JSON');
     } catch {
       showMsg('حدث خطأ أثناء تصدير الملف', 'error');
+    }
+  };
+
+  const handleCopyLink = async (bizId: string, bizName: string) => {
+    try {
+      const url = StorageService.getDirectBusinessUrl(bizId);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
+      showMsg(`✅ تم نسخ رابط «${bizName}» المباشر! يمكنك فتحه في أي متصفح`);
+    } catch {
+      showMsg('تعذر نسخ الرابط تلقائياً', 'error');
     }
   };
 
@@ -297,7 +331,11 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
                             </span>
                           )}
                           <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
-                            {isRestaurant ? 'مطعم' : 'تجزئة'}
+                            {biz.specialtyProfile
+                              ? getSpecialtyProfileLabel(biz.specialtyProfile)
+                              : isRestaurant
+                              ? 'مطعم'
+                              : 'تجزئة'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
@@ -316,14 +354,23 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
 
                     {/* Actions */}
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleExport(biz.id)}
-                        className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs transition-colors cursor-pointer"
-                        title="تصدير ملف نسخة احتياطية JSON لهذه المنشأة"
-                      >
-                        <Download className="w-4 h-4" />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLink(biz.id, biz.name)}
+                          className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white rounded-xl text-xs transition-colors cursor-pointer"
+                          title="نسخ رابط مباشر لفتح هذا النشاط على كمبيوتر أو هاتف آخر"
+                        >
+                          <Share2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleExport(biz.id)}
+                          className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs transition-colors cursor-pointer"
+                          title="تصدير ملف نسخة احتياطية JSON لهذه المنشأة"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
 
                       {businesses.length > 1 && (
                         <>
@@ -400,34 +447,85 @@ export const BusinessSwitcherModal: React.FC<Props> = ({
         {/* Tab 2: Create New Business */}
         {activeTab === 'create' && (
           <form onSubmit={handleCreateBusiness} className="space-y-4 text-xs">
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setNewBizType('restaurant')}
-                className={`p-3 rounded-2xl border text-right space-y-1 transition-all cursor-pointer ${
-                  newBizType === 'restaurant'
-                    ? 'border-amber-500 bg-amber-500/15 text-amber-300'
-                    : 'border-slate-800 bg-slate-950 text-slate-400'
-                }`}
-              >
-                <UtensilsCrossed className="w-4 h-4" />
-                <div className="text-xs font-black text-white">مطعم وجبات ومشويات</div>
-                <p className="text-[10px] text-slate-400">منيو ووصفات وخصم مخزون</p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setNewBizType('retail')}
-                className={`p-3 rounded-2xl border text-right space-y-1 transition-all cursor-pointer ${
-                  newBizType === 'retail'
-                    ? 'border-amber-500 bg-amber-500/15 text-amber-300'
-                    : 'border-slate-800 bg-slate-950 text-slate-400'
-                }`}
-              >
-                <Store className="w-4 h-4" />
-                <div className="text-xs font-black text-white">محل تجزئة / سوبر ماركت</div>
-                <p className="text-[10px] text-slate-400">بيع مباشر للأصناف الجاهزة</p>
-              </button>
+            <div>
+              <label className="font-bold text-slate-300 block mb-2">
+                تخصص النشاط التجاري والميزات التشغيلية المدمجة:
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(
+                  [
+                    {
+                      id: 'restaurant',
+                      label: 'مطعم ومشويات وكافيه',
+                      sub: 'منيو ووصفات وKOT وطاولات',
+                      icon: <UtensilsCrossed className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'supermarket',
+                      label: 'سوبر ماركت وبقالة',
+                      sub: 'ميزان إلكتروني وتعدد عبوات',
+                      icon: <Store className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'pet_store',
+                      label: 'مستلزمات حيوانات أليفة',
+                      sub: 'بيع دراي فود فرط + سجل وتطعيمات',
+                      icon: <Heart className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'apparel',
+                      label: 'محل ملابس وأحذية',
+                      sub: 'مصفوفة مقاسات وألوان للموديل',
+                      icon: <Shirt className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'pharmacy',
+                      label: 'صيدلية ومستلزمات طبية',
+                      sub: 'بيع بالشريط + بدائل ومادة فعالة',
+                      icon: <Pill className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'electronics',
+                      label: 'موبايلات وإلكترونيات',
+                      sub: 'سيريال IMEI + شهادة ضمان بالفاتورة',
+                      icon: <Smartphone className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'service_center',
+                      label: 'مركز صيانة وورش إصلاح',
+                      sub: 'تذاكر صيانة + قطع غيار + عمولة فني',
+                      icon: <Wrench className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'beauty_clinic',
+                      label: 'بيوتي سنتر وعيادات تجميل',
+                      sub: 'حجوزات جلسات + باقات مسبقة الدفع',
+                      icon: <Scissors className="w-4 h-4" />,
+                    },
+                    {
+                      id: 'laundry',
+                      label: 'مغسلة ودراي كلين',
+                      sub: 'استلام قطع بتاج + موعد تسليم وعربون',
+                      icon: <Sparkles className="w-4 h-4" />,
+                    },
+                  ] as const
+                ).map((prof) => (
+                  <button
+                    key={prof.id}
+                    type="button"
+                    onClick={() => setNewBizProfile(prof.id)}
+                    className={`p-2.5 rounded-2xl border text-right space-y-1 transition-all cursor-pointer ${
+                      newBizProfile === prof.id
+                        ? 'border-amber-500 bg-amber-500/15 text-amber-300'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    {prof.icon}
+                    <div className="text-xs font-black text-white">{prof.label}</div>
+                    <p className="text-[10px] text-slate-400">{prof.sub}</p>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

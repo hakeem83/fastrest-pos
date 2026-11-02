@@ -5,6 +5,7 @@ import {
   HardDrive,
   Laptop,
   MonitorDown,
+  Share2,
   ShieldCheck,
   Upload,
   WifiOff,
@@ -25,6 +26,31 @@ export const DesktopInstallModal: React.FC<Props> = ({
 }) => {
   const [statusMsg, setStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const handleCopyDirectUrl = async () => {
+    try {
+      const url = StorageService.getDirectBusinessUrl();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
+      setStatusMsg({
+        type: 'ok',
+        text: '✅ تم نسخ رابط المنشأة المباشر! يمكنك الآن فتحه في متصفح Chrome أو Edge على أي كمبيوتر آخر.',
+      });
+    } catch {
+      setStatusMsg({
+        type: 'err',
+        text: 'تعذر نسخ الرابط تلقائياً.',
+      });
+    }
+  };
 
   const handleExportLocalBackup = () => {
     try {
@@ -124,6 +150,24 @@ export const DesktopInstallModal: React.FC<Props> = ({
             <span>{statusMsg.text}</span>
           </div>
         )}
+
+        {/* رابط المنشأة المباشر لفتحه على أجهزة الكاشير والكمبيوتر */}
+        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-amber-300">الرابط المباشر لفتح هذا النشاط على كمبيوتر أو هاتف آخر:</span>
+            <button
+              type="button"
+              onClick={handleCopyDirectUrl}
+              className="py-1.5 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>نسخ الرابط المباشر</span>
+            </button>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 font-mono text-[11px] text-slate-300 break-all select-all">
+            {StorageService.getDirectBusinessUrl()}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
           {/* ويندوز 10 و 11 */}

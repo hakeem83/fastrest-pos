@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ApparelVariant,
   Customer,
   DeliveryDriver,
   InventoryItem,
@@ -8,9 +9,11 @@ import {
   OrderStatus,
   OrderType,
   PaymentMethod,
+  PetProfile,
   Promotion,
   RestaurantSettings,
   SaleOrder,
+  ServiceTicket,
   Shift,
   Voucher,
 } from '../types';
@@ -19,19 +22,24 @@ import {
   getOrderStatusLabel,
   getOrderTypeLabel,
   getPaymentMethodLabel,
+  getSpecialtyProfileLabel,
   StorageService,
 } from '../services/storage';
 import { PromotionsEngine } from '../services/promotionsEngine';
 import { QuickCustomerModal } from './QuickCustomerModal';
 import { PromotionsPickerModal } from './PromotionsPickerModal';
 import { OrderPrintMode } from './PrintPreviewDialog';
+import { ServiceTicketPrintModal } from './SpecialtyPrintModal';
+import { MobileQuickPOSView } from './MobileQuickPOSView';
 import {
   AlertTriangle,
   Banknote,
+  Barcode,
   Bike,
   Check,
   CheckCircle2,
   ChefHat,
+  ClipboardList,
   Clock,
   CreditCard,
   Edit3,
@@ -39,15 +47,20 @@ import {
   FileText,
   Flame,
   HandCoins,
+  Heart,
   Layers,
   Minus,
+  Package,
+  Pill,
   Plus,
   Printer,
   Receipt,
+  Scale,
   Search,
   Send,
   ShieldAlert,
   ShieldCheck,
+  Shirt,
   ShoppingBag,
   Smartphone,
   Sparkles,
@@ -58,6 +71,7 @@ import {
   UserPlus,
   UtensilsCrossed,
   Wallet,
+  Wrench,
   X,
   Zap,
 } from 'lucide-react';
@@ -79,10 +93,15 @@ interface CartLine {
   name: string;
   category: string;
   unitPrice: number;
+  unitCostOverride?: number;
   qty: number;
   notes?: string;
   kitchenStationId?: string;
   kitchenStationName?: string;
+  variantId?: string;
+  stockDeductMultiplier?: number;
+  serialNumber?: string;
+  serviceTicketId?: string;
 }
 
 const PRESET_KITCHEN_NOTES = [
@@ -107,6 +126,10 @@ export const CashierPOSView: React.FC<Props> = ({
   onRefresh,
 }) => {
   const isRetail = settings.businessType === 'retail';
+  const specialtyProfile =
+    settings.specialtyProfile ||
+    (settings.businessType === 'retail' ? 'supermarket' : 'restaurant');
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   // Master Data & Stations
   const [kitchenStations, setKitchenStations] = useState<KitchenStation[]>(() =>
@@ -118,11 +141,33 @@ export const CashierPOSView: React.FC<Props> = ({
   const [openOrders, setOpenOrders] = useState<SaleOrder[]>(() =>
     StorageService.getOpenOrders(activeShift.id)
   );
+  const [petProfiles, setPetProfiles] = useState<PetProfile[]>(() =>
+    StorageService.getPetProfiles()
+  );
+  const [selectedPetId, setSelectedPetId] = useState<string>('');
+
+  // Specialized POS Modals State
+  const [barcodeInput, setBarcodeInput] = useState<string>('');
+  const [weightedModalItem, setWeightedModalItem] = useState<InventoryItem | null>(null);
+  const [weightGramsStr, setWeightGramsStr] = useState<string>('500');
+  const [weightAmountMajorStr, setWeightAmountMajorStr] = useState<string>('');
+  const [variantModalItem, setVariantModalItem] = useState<InventoryItem | null>(null);
+  const [serialModalItem, setSerialModalItem] = useState<InventoryItem | null>(null);
+  const [customSerialInput, setCustomSerialInput] = useState<string>('');
+  const [alternativesIngredient, setAlternativesIngredient] = useState<string | null>(null);
+  const [serviceTickets, setServiceTickets] = useState<ServiceTicket[]>(() =>
+    StorageService.getServiceTickets()
+  );
+  const [showServiceTicketsModal, setShowServiceTicketsModal] = useState<boolean>(false);
+  const [printingServiceTicket, setPrintingServiceTicket] = useState<ServiceTicket | null>(null);
+  const [showMobileQuickView, setShowMobileQuickView] = useState<boolean>(false);
 
   const refreshOpenOrders = () => {
     setOpenOrders(StorageService.getOpenOrders(activeShift.id));
     setDeliveryDrivers(StorageService.getDeliveryDrivers());
     setKitchenStations(StorageService.getKitchenStations());
+    setPetProfiles(StorageService.getPetProfiles());
+    setServiceTickets(StorageService.getServiceTickets());
   };
 
   const sellableDishes: MenuItem[] = useMemo(() => {
@@ -228,14 +273,19 @@ export const CashierPOSView: React.FC<Props> = ({
   }, [selectedCustomer, orderType]);
 
   const filteredDishes = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
     return sellableDishes.filter((d) => {
       const matchesCat = selectedCategory === 'all' || d.category === selectedCategory;
+      if (!q) return matchesCat;
+      const inv = isRetail ? inventory.find((i) => i.id === d.id) : undefined;
       const matchesSearch =
-        d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.code.toLowerCase().includes(searchQuery.toLowerCase());
+        d.name.toLowerCase().includes(q) ||
+        d.code.toLowerCase().includes(q) ||
+        Boolean(inv?.activeIngredient && inv.activeIngredient.toLowerCase().includes(q)) ||
+        Boolean(inv?.barcode && inv.barcode.toLowerCase().includes(q));
       return matchesCat && matchesSearch;
     });
-  }, [sellableDishes, selectedCategory, searchQuery]);
+  }, [sellableDishes, selectedCategory, searchQuery, isRetail, inventory]);
 
   // Tables occupied by active dine-in orders
   const occupiedTablesMap = useMemo(() => {
@@ -255,17 +305,77 @@ export const CashierPOSView: React.FC<Props> = ({
   );
 
   // Cart Operations
-  const handleAddToCart = (dish: MenuItem) => {
+  const handleAddToCart = (
+    dish: MenuItem,
+    customOpts?: {
+      nameSuffix?: string;
+      unitPriceOverride?: number;
+      unitCostOverride?: number;
+      qtyOverride?: number;
+      notes?: string;
+      variantId?: string;
+      stockDeductMultiplier?: number;
+      serialNumber?: string;
+      serviceTicketId?: string;
+    }
+  ) => {
     setErrorMsg('');
+    if (isRetail) {
+      const inv = inventory.find((i) => i.id === dish.id);
+      if (inv?.expiryDate && inv.expiryDate < todayIso) {
+        setErrorMsg(
+          `⛔ حارس الصلاحية الآلي: الصنف "${inv.name}" منتهي الصلاحية بتاريخ (${inv.expiryDate}) ولا يمكن بيعه!`
+        );
+        return;
+      }
+      if (
+        inv &&
+        inv.variants &&
+        inv.variants.length > 0 &&
+        !customOpts?.variantId
+      ) {
+        setVariantModalItem(inv);
+        return;
+      }
+      if (
+        inv &&
+        inv.serialNumbers &&
+        inv.serialNumbers.length > 0 &&
+        !customOpts?.serialNumber
+      ) {
+        setSerialModalItem(inv);
+        setCustomSerialInput('');
+        return;
+      }
+    }
+
     const station = kitchenStations.find((s) => s.id === dish.kitchenStationId);
+    const effectiveName = customOpts?.nameSuffix
+      ? `${dish.name} (${customOpts.nameSuffix})`
+      : dish.name;
+    const effectivePrice =
+      customOpts?.unitPriceOverride !== undefined
+        ? customOpts.unitPriceOverride
+        : dish.sellingPrice;
+    const effectiveQty = customOpts?.qtyOverride ?? 1;
 
     setCart((prev) => {
-      const existingIdx = prev.findIndex((c) => c.menuItemId === dish.id && !c.notes);
-      if (existingIdx !== -1) {
+      const existingIdx = prev.findIndex(
+        (c) =>
+          c.menuItemId === dish.id &&
+          c.name === effectiveName &&
+          c.unitPrice === effectivePrice &&
+          c.variantId === customOpts?.variantId &&
+          c.serialNumber === customOpts?.serialNumber &&
+          c.serviceTicketId === customOpts?.serviceTicketId &&
+          c.stockDeductMultiplier === customOpts?.stockDeductMultiplier &&
+          (c.notes || '') === (customOpts?.notes || '')
+      );
+      if (existingIdx !== -1 && !customOpts?.serialNumber) {
         const updated = [...prev];
         updated[existingIdx] = {
           ...updated[existingIdx],
-          qty: updated[existingIdx].qty + 1,
+          qty: Number((updated[existingIdx].qty + effectiveQty).toFixed(3)),
         };
         return updated;
       }
@@ -274,15 +384,176 @@ export const CashierPOSView: React.FC<Props> = ({
         {
           menuItemId: dish.id,
           code: dish.code,
-          name: dish.name,
+          name: effectiveName,
           category: dish.category,
-          unitPrice: dish.sellingPrice,
-          qty: 1,
+          unitPrice: effectivePrice,
+          unitCostOverride: customOpts?.unitCostOverride,
+          qty: effectiveQty,
+          notes: customOpts?.notes,
           kitchenStationId: station?.id,
           kitchenStationName: station?.name,
+          variantId: customOpts?.variantId,
+          stockDeductMultiplier: customOpts?.stockDeductMultiplier,
+          serialNumber: customOpts?.serialNumber,
+          serviceTicketId: customOpts?.serviceTicketId,
         },
       ];
     });
+  };
+
+  // Barcode & Electronic Scale (21 Prefix) Scanner Handler
+  const handleBarcodeScanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = barcodeInput.trim();
+    if (!code) return;
+    setErrorMsg('');
+
+    // 1. Check Electronic Scale Barcode (21 + 5-digit PLU + 5-digit weight in grams)
+    const scaleParsed = StorageService.parseElectronicScaleBarcode(code);
+    if (scaleParsed.isScaleBarcode && scaleParsed.matchedItem && scaleParsed.weightKg) {
+      const item = scaleParsed.matchedItem;
+      const dish = sellableDishes.find((d) => d.id === item.id);
+      if (dish) {
+        const calcTotalMinor = Math.round(
+          (item.salePrice || item.unitCost) * scaleParsed.weightKg
+        );
+        handleAddToCart(dish, {
+          nameSuffix: `وزن ${scaleParsed.weightKg.toFixed(3)} ${item.unit || 'كجم'}`,
+          unitPriceOverride: calcTotalMinor,
+          unitCostOverride: Math.round(item.unitCost * scaleParsed.weightKg),
+          qtyOverride: 1,
+          stockDeductMultiplier: scaleParsed.weightKg,
+          notes: `باركود ميزان #${code} (${(scaleParsed.weightKg * 1000).toFixed(0)} جرام)`,
+        });
+        setBarcodeInput('');
+        setSuccessBanner(
+          `⚖️ قراءة ميزان إلكتروني: ${item.name} — الوزن ${scaleParsed.weightKg.toFixed(3)} كجم — السعر ${formatCurrency(
+            calcTotalMinor,
+            settings.currency
+          )}`
+        );
+        setTimeout(() => setSuccessBanner(''), 4000);
+        return;
+      }
+    }
+
+    // 2. Check Apparel Size/Color Variant Barcode
+    for (const inv of inventory) {
+      if (inv.variants && inv.variants.length > 0) {
+        const matchedVar = inv.variants.find(
+          (v) => v.barcode === code || `${inv.code}-${v.size}`.toLowerCase() === code.toLowerCase()
+        );
+        if (matchedVar) {
+          const dish = sellableDishes.find((d) => d.id === inv.id);
+          if (dish) {
+            handleAddToCart(dish, {
+              nameSuffix: `مقاس ${matchedVar.size} - ${matchedVar.color}`,
+              variantId: matchedVar.id,
+              notes: `مقاس: ${matchedVar.size} | لون: ${matchedVar.color}`,
+            });
+            setBarcodeInput('');
+            return;
+          }
+        }
+      }
+    }
+
+    // 2.5 Check Electronics Serial Number / IMEI Scan
+    for (const inv of inventory) {
+      if (inv.serialNumbers && inv.serialNumbers.length > 0) {
+        const matchedSerial = inv.serialNumbers.find(
+          (sn) => sn.toLowerCase() === code.toLowerCase()
+        );
+        if (matchedSerial) {
+          const dish = sellableDishes.find((d) => d.id === inv.id);
+          if (dish) {
+            const warrantyNote = inv.warrantyMonths
+              ? ` | ضمان معتمد: ${inv.warrantyMonths} شهر`
+              : '';
+            handleAddToCart(dish, {
+              nameSuffix: `سيريال: ${matchedSerial}`,
+              serialNumber: matchedSerial,
+              notes: `شهادة ضمان وسيريال: ${matchedSerial}${warrantyNote}`,
+            });
+            setBarcodeInput('');
+            setSuccessBanner(
+              `📱 تم قراءة السيريال (${matchedSerial}) للجهاز ${inv.name}${warrantyNote}`
+            );
+            setTimeout(() => setSuccessBanner(''), 4000);
+            return;
+          }
+        }
+      }
+    }
+
+    // 2.6 Check Service Ticket / Laundry Tag / Appointment Barcode Scan (e.g. SRV-1001, LND-3001, TAG-501)
+    const cleanTicketCode = code.replace(/^\*+|\*+$/g, '').trim();
+    const matchedTicket = serviceTickets.find(
+      (t) =>
+        !t.isSettled &&
+        t.status !== 'cancelled' &&
+        (t.ticketNumber.toLowerCase() === cleanTicketCode.toLowerCase() ||
+          (t.serialOrTagNumber &&
+            t.serialOrTagNumber.toLowerCase() === cleanTicketCode.toLowerCase()))
+    );
+    if (matchedTicket) {
+      const fallbackTarget = sellableDishes[0];
+      if (fallbackTarget) {
+        const remainingMinor = Math.max(
+          0,
+          matchedTicket.totalAmountMinor - matchedTicket.depositPaidMinor
+        );
+        const totalCostMinor = (matchedTicket.partsUsed || []).reduce(
+          (s, p) => s + p.unitCostMinor * p.qty,
+          0
+        );
+        handleAddToCart(fallbackTarget, {
+          nameSuffix: `تذكرة ${matchedTicket.ticketNumber}: ${matchedTicket.itemOrServiceTitle}`,
+          unitPriceOverride: remainingMinor,
+          unitCostOverride: totalCostMinor,
+          qtyOverride: 1,
+          stockDeductMultiplier: 0,
+          serviceTicketId: matchedTicket.id,
+          notes: `تسليم تذكرة ${matchedTicket.ticketNumber} | العميل: ${matchedTicket.customerName}`,
+        });
+        setBarcodeInput('');
+        setSuccessBanner(
+          `🎫 تم مسح باركود التذكرة (${matchedTicket.ticketNumber}) للعميل ${matchedTicket.customerName} — المتبقي للتحصيل: ${formatCurrency(
+            remainingMinor,
+            settings.currency
+          )}`
+        );
+        setTimeout(() => setSuccessBanner(''), 4500);
+        return;
+      }
+    }
+
+    // 3. Check Standard Item Barcode or Code
+    const matchedInv = inventory.find(
+      (i) =>
+        i.barcode === code ||
+        i.code.toLowerCase() === code.toLowerCase() ||
+        i.scalePluCode === code
+    );
+    if (matchedInv) {
+      const dish = sellableDishes.find((d) => d.id === matchedInv.id);
+      if (dish) {
+        handleAddToCart(dish);
+        setBarcodeInput('');
+        return;
+      }
+    }
+
+    const matchedDish = sellableDishes.find(
+      (d) => d.code.toLowerCase() === code.toLowerCase()
+    );
+    if (matchedDish) {
+      handleAddToCart(matchedDish);
+      setBarcodeInput('');
+      return;
+    }
+
+    setErrorMsg(`لم يتم العثور على صنف يطابق الباركود أو الكود: "${code}"`);
   };
 
   const handleUpdateQty = (idx: number, delta: number) => {
@@ -491,12 +762,26 @@ export const CashierPOSView: React.FC<Props> = ({
           qty: c.qty,
           notes: c.notes,
           kitchenStationId: c.kitchenStationId,
+          unitPriceOverride: c.unitPrice,
+          unitCostOverride: c.unitCostOverride,
+          variantId: c.variantId,
+          stockDeductMultiplier: c.stockDeductMultiplier,
         })),
         discountMinor: totalDiscountMinor,
         couponCode: appliedPromotion?.code,
         promotionTitle: appliedPromotion?.title,
         promotionDiscountMinor: promoDiscountMinor,
-        notes: orderNotes.trim() || undefined,
+        notes:
+          [
+            orderNotes.trim(),
+            selectedPetId
+              ? `حيوان أليف: ${
+                  petProfiles.find((p) => p.id === selectedPetId)?.petName || ''
+                }`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' | ') || undefined,
       });
 
       handleClearCart();
@@ -546,12 +831,38 @@ export const CashierPOSView: React.FC<Props> = ({
           qty: c.qty,
           notes: c.notes,
           kitchenStationId: c.kitchenStationId,
+          unitPriceOverride: c.unitPrice,
+          unitCostOverride: c.unitCostOverride,
+          variantId: c.variantId,
+          stockDeductMultiplier: c.stockDeductMultiplier,
+          serialNumber: c.serialNumber,
         })),
         discountMinor: totalDiscountMinor,
         couponCode: appliedPromotion?.code,
         promotionTitle: appliedPromotion?.title,
         promotionDiscountMinor: promoDiscountMinor,
-        notes: orderNotes.trim() || undefined,
+        notes:
+          [
+            orderNotes.trim(),
+            selectedPetId
+              ? `حيوان أليف: ${
+                  petProfiles.find((p) => p.id === selectedPetId)?.petName || ''
+                }`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' | ') || undefined,
+      });
+
+      // Mark any linked ServiceTickets as settled & delivered
+      cart.forEach((c) => {
+        if (c.serviceTicketId) {
+          StorageService.updateServiceTicketStatus(
+            c.serviceTicketId,
+            'delivered',
+            createdOrder.id
+          );
+        }
       });
 
       handleClearCart();
@@ -730,6 +1041,16 @@ export const CashierPOSView: React.FC<Props> = ({
 
         {/* Quick Operations Strip */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Mobile Quick POS & Driver View Trigger Button */}
+          <button
+            type="button"
+            onClick={() => setShowMobileQuickView(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all cursor-pointer"
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>وضع الجوال والطيار السريع</span>
+          </button>
+
           {/* Active Orders & Open Tables Button */}
           <button
             type="button"
@@ -764,6 +1085,22 @@ export const CashierPOSView: React.FC<Props> = ({
             )}
           </button>
 
+          {/* Service Tickets / Appointments / Laundry POS Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setServiceTickets(StorageService.getServiceTickets());
+              setShowServiceTicketsModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 rounded-xl text-xs font-black transition-all cursor-pointer"
+          >
+            <ClipboardList className="w-4 h-4" />
+            <span>تذاكر الصيانة والحجوزات والمغسلة</span>
+            <span className="bg-purple-500 text-slate-950 font-mono font-bold px-1.5 py-0.2 rounded-full text-[11px]">
+              {serviceTickets.filter((t) => !t.isSettled && t.status !== 'cancelled').length}
+            </span>
+          </button>
+
           {/* Customer Debt Collection Button */}
           <button
             type="button"
@@ -787,6 +1124,48 @@ export const CashierPOSView: React.FC<Props> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* RIGHT COLUMN: DISHES & MENU CATALOG (7 cols) */}
         <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-xl">
+          {/* Barcode & Electronic Scale Scanner Bar (For Specialized Retail & Supermarket) */}
+          <form
+            onSubmit={handleBarcodeScanSubmit}
+            className="flex flex-wrap items-center gap-2 bg-slate-950/90 border border-slate-800 rounded-xl p-2"
+          >
+            <div className="flex items-center gap-1.5 text-amber-400 px-2">
+              <Barcode className="w-4 h-4 shrink-0" />
+              <span className="text-[11px] font-black whitespace-nowrap">
+                قارئ الباركود والميزان ({getSpecialtyProfileLabel(specialtyProfile)}):
+              </span>
+            </div>
+            <input
+              type="text"
+              value={barcodeInput}
+              onChange={(e) => setBarcodeInput(e.target.value)}
+              placeholder="امسح الباركود أو كود الميزان الإلكتروني (مثال: 2100101007500) ثم اضغط Enter..."
+              className="flex-1 min-w-[180px] bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+            />
+            <button
+              type="submit"
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs cursor-pointer"
+            >
+              إضافة بالباركود
+            </button>
+            {(specialtyProfile === 'supermarket' || specialtyProfile === 'pet_store') && (
+              <button
+                type="button"
+                onClick={() => {
+                  const sampleScaleItem = inventory.find((i) => i.isWeightedScaleItem && i.scalePluCode);
+                  const plu = (sampleScaleItem?.scalePluCode || '00101').padStart(5, '0').slice(0, 5);
+                  const sampleBarcode = `21${plu}007508`;
+                  setBarcodeInput(sampleBarcode);
+                }}
+                className="px-2.5 py-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                title="توليد باركود ميزان إلكتروني لوزن 750 جرام لتجربته فوراً"
+              >
+                <Scale className="w-3.5 h-3.5" />
+                <span>تجربة باركود ميزان (750 جم)</span>
+              </button>
+            )}
+          </form>
+
           {/* Search & Category Filter */}
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1">
@@ -795,7 +1174,7 @@ export const CashierPOSView: React.FC<Props> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="ابحث باسم الطبق أو الكود السريع..."
+                placeholder="ابحث باسم الصنف أو الكود السريع أو المادة الفعالة..."
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
               />
             </div>
@@ -817,10 +1196,12 @@ export const CashierPOSView: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Dishes Grid */}
+          {/* Dishes & Retail Products Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[640px] overflow-y-auto pr-0.5">
             {filteredDishes.map((dish) => {
               const stockInfo = getDishStockStatus(dish);
+              const invItem = isRetail ? inventory.find((i) => i.id === dish.id) : undefined;
+              const isExpired = Boolean(invItem?.expiryDate && invItem.expiryDate < todayIso);
               const inCartCount = cart
                 .filter((c) => c.menuItemId === dish.id)
                 .reduce((s, c) => s + c.qty, 0);
@@ -830,13 +1211,15 @@ export const CashierPOSView: React.FC<Props> = ({
                 <div
                   key={dish.id}
                   className={`group relative bg-slate-950/90 border rounded-2xl p-3.5 flex flex-col justify-between transition-all ${
-                    inCartCount > 0
+                    isExpired
+                      ? 'border-rose-500/60 bg-rose-950/15 opacity-80'
+                      : inCartCount > 0
                       ? 'border-amber-500 shadow-md shadow-amber-500/10'
                       : 'border-slate-800 hover:border-slate-700'
                   }`}
                 >
                   <div>
-                    <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                    <div className="flex items-center justify-between gap-1.5 mb-1.5 flex-wrap">
                       <span className="text-[10px] font-mono bg-slate-900 text-slate-400 border border-slate-800 px-2 py-0.5 rounded">
                         {dish.code}
                       </span>
@@ -845,29 +1228,65 @@ export const CashierPOSView: React.FC<Props> = ({
                           🔥 {station.name}
                         </span>
                       )}
-                      <span
-                        className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
-                          !stockInfo.available
-                            ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                            : stockInfo.lowStock
-                            ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        }`}
-                      >
-                        {stockInfo.label}
-                      </span>
+                      {invItem?.isServiceItem ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-pink-500/15 text-pink-300 border border-pink-500/30">
+                          ✂️ خدمة فورية
+                        </span>
+                      ) : (
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                            !stockInfo.available
+                              ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                              : stockInfo.lowStock
+                              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}
+                        >
+                          {stockInfo.label}
+                        </span>
+                      )}
                     </div>
 
                     <h3 className="text-sm font-extrabold text-white leading-snug mb-1">
                       {dish.name}
                     </h3>
-                    <span className="text-[11px] text-slate-400 block mb-2">{dish.category}</span>
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      <span className="text-[11px] text-slate-400">{dish.category}</span>
+                      {invItem?.activeIngredient && (
+                        <span className="text-[10px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1.5 py-0.5 rounded font-mono">
+                          {invItem.activeIngredient}
+                        </span>
+                      )}
+                      {invItem?.warrantyMonths && (
+                        <span className="text-[10px] bg-sky-500/15 text-sky-300 border border-sky-500/30 px-1.5 py-0.5 rounded font-bold">
+                          🛡️ ضمان {invItem.warrantyMonths} شهر
+                        </span>
+                      )}
+                      {invItem?.serialNumbers && invItem.serialNumbers.length > 0 && (
+                        <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
+                          📱 {invItem.serialNumbers.length} سيريال IMEI
+                        </span>
+                      )}
+                      {invItem?.expiryDate && (
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                            isExpired
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-black'
+                              : 'bg-slate-900 text-slate-400 border border-slate-800'
+                          }`}
+                        >
+                          {isExpired ? `⛔ منتهي: ${invItem.expiryDate}` : `صلاحية: ${invItem.expiryDate}`}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="pt-2 border-t border-slate-800/80 space-y-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-500 block">سعر البيع</span>
+                        <span className="text-[10px] text-slate-500 block">
+                          سعر البيع ({invItem?.unit || 'وحدة'})
+                        </span>
                         <strong className="text-base font-black font-mono text-amber-400">
                           {formatCurrency(dish.sellingPrice, settings.currency)}
                         </strong>
@@ -884,17 +1303,147 @@ export const CashierPOSView: React.FC<Props> = ({
                           <span>الوصفة</span>
                         </button>
                       )}
+
+                      {/* Pharmacy Active Ingredient Alternatives Finder */}
+                      {invItem?.activeIngredient && (
+                        <button
+                          type="button"
+                          onClick={() => setAlternativesIngredient(invItem.activeIngredient || null)}
+                          className="px-2 py-1 text-emerald-300 hover:text-white bg-emerald-500/15 hover:bg-emerald-500/25 rounded-lg border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          title="عرض الأدوية البديلة بنفس المادة الفعالة"
+                        >
+                          <Pill className="w-3 h-3" />
+                          <span>البدائل</span>
+                        </button>
+                      )}
                     </div>
+
+                    {/* Specialized Multi-Unit / Scale / Blister / Variant Action Buttons */}
+                    {isRetail && invItem && !isExpired && (
+                      <div className="flex flex-wrap gap-1">
+                        {/* 1. Weighted Scale / Bulk Pet Food by Weight or Money */}
+                        {invItem.isWeightedScaleItem && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWeightedModalItem(invItem);
+                              setWeightGramsStr('500');
+                              setWeightAmountMajorStr(
+                                (((invItem.salePrice || invItem.unitCost) * 0.5) / 100).toFixed(2)
+                              );
+                            }}
+                            className="flex-1 py-1.5 px-2 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <Scale className="w-3 h-3" />
+                            <span>بيع بالوزن / بالمبلغ</span>
+                          </button>
+                        )}
+
+                        {/* 2. Carton / Pack Multi-Unit Button */}
+                        {invItem.packUnitName &&
+                          invItem.packConversionFactor &&
+                          invItem.packConversionFactor > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleAddToCart(dish, {
+                                  nameSuffix: `${invItem.packUnitName} (${invItem.packConversionFactor} ${invItem.unit})`,
+                                  unitPriceOverride:
+                                    invItem.packSalePrice ||
+                                    dish.sellingPrice * invItem.packConversionFactor,
+                                  unitCostOverride:
+                                    invItem.unitCost * invItem.packConversionFactor,
+                                  stockDeductMultiplier: invItem.packConversionFactor,
+                                })
+                              }
+                              className="flex-1 py-1.5 px-2 bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Package className="w-3 h-3" />
+                              <span>
+                                + {invItem.packUnitName} (
+                                {formatCurrency(
+                                  invItem.packSalePrice ||
+                                    dish.sellingPrice * invItem.packConversionFactor,
+                                  settings.currency
+                                )}
+                                )
+                              </span>
+                            </button>
+                          )}
+
+                        {/* 3. Pharmacy Blister / Sub-Unit Button */}
+                        {invItem.subUnitsPerPack && invItem.subUnitsPerPack > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const stripPrice = Math.round(
+                                dish.sellingPrice / (invItem.subUnitsPerPack || 1)
+                              );
+                              const stripCost = Math.round(
+                                invItem.unitCost / (invItem.subUnitsPerPack || 1)
+                              );
+                              const multiplier = Number(
+                                (1 / (invItem.subUnitsPerPack || 1)).toFixed(4)
+                              );
+                              handleAddToCart(dish, {
+                                nameSuffix: `${invItem.subUnitName || 'شريط'} (1/${invItem.subUnitsPerPack})`,
+                                unitPriceOverride: stripPrice,
+                                unitCostOverride: stripCost,
+                                stockDeductMultiplier: multiplier,
+                                notes: invItem.dosageInstruction || undefined,
+                              });
+                            }}
+                            className="flex-1 py-1.5 px-2 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <Pill className="w-3 h-3" />
+                            <span>
+                              + {invItem.subUnitName || 'شريط'} (
+                              {formatCurrency(
+                                Math.round(dish.sellingPrice / invItem.subUnitsPerPack),
+                                settings.currency
+                              )}
+                              )
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     <button
                       type="button"
-                      onClick={() => handleAddToCart(dish)}
-                      className="w-full py-2 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      disabled={isExpired}
+                      onClick={() =>
+                        handleAddToCart(dish, {
+                          notes: invItem?.dosageInstruction || undefined,
+                        })
+                      }
+                      className={`w-full py-2 px-3 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                        isExpired
+                          ? 'bg-rose-950 text-rose-400 border border-rose-800 cursor-not-allowed'
+                          : invItem?.variants && invItem.variants.length > 0
+                          ? 'bg-purple-500 hover:bg-purple-400 text-slate-950'
+                          : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                      }`}
                     >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
-                      <span>
-                        {inCartCount > 0 ? `إضافة المزيد (${inCartCount} بالسلة)` : 'إضافة للطلب'}
-                      </span>
+                      {isExpired ? (
+                        <span>⛔ موقوف (منتهي الصلاحية)</span>
+                      ) : invItem?.variants && invItem.variants.length > 0 ? (
+                        <>
+                          <Shirt className="w-4 h-4 stroke-[2.2]" />
+                          <span>اختر المقاس واللون ({invItem.variants.length})</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4 stroke-[2.5]" />
+                          <span>
+                            {inCartCount > 0
+                              ? `إضافة المزيد (${inCartCount} بالسلة)`
+                              : invItem?.subUnitsPerPack && invItem.subUnitsPerPack > 1
+                              ? 'إضافة علبة كاملة'
+                              : 'إضافة للطلب'}
+                          </span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -1265,6 +1814,40 @@ export const CashierPOSView: React.FC<Props> = ({
                 </option>
               ))}
             </select>
+
+            {/* Pet Store CRM Selector */}
+            {specialtyProfile === 'pet_store' && petProfiles.length > 0 && (
+              <div className="pt-1.5">
+                <label className="text-[11px] font-bold text-pink-300 flex items-center gap-1 mb-1">
+                  <Heart className="w-3.5 h-3.5" />
+                  <span>ربط الفاتورة بملف أليف مسجل (تطعيمات / فندقة / عناية):</span>
+                </label>
+                <select
+                  value={selectedPetId}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    setSelectedPetId(pid);
+                    const foundPet = petProfiles.find((p) => p.id === pid);
+                    if (foundPet && !selectedCustomerId) {
+                      const matchedCust = customers.find(
+                        (c) =>
+                          c.phone === foundPet.customerPhone ||
+                          c.name === foundPet.customerName
+                      );
+                      if (matchedCust) setSelectedCustomerId(matchedCust.id);
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-pink-500/30 rounded-xl px-3 py-1.5 text-xs text-white"
+                >
+                  <option value="">— بدون ربط بحيوان أليف محدد —</option>
+                  {petProfiles.map((pet) => (
+                    <option key={pet.id} value={pet.id}>
+                      🐾 {pet.petName} ({pet.breed || pet.species}) — المالك: {pet.customerName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Electronic Payment Ref */}
@@ -2081,6 +2664,619 @@ export const CashierPOSView: React.FC<Props> = ({
         onApplyPromotion={handleApplyPromotion}
         onRemovePromotion={handleRemovePromotion}
       />
+
+      {/* MODAL: WEIGHTED / BULK SALE BY GRAMS OR BY MONEY AMOUNT (Supermarket & Pet Store) */}
+      {weightedModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-sky-400" />
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    بيع بالوزن أو بالمبلغ: {weightedModalItem.name}
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    سعر الـ {weightedModalItem.unit || 'كجم'}:{' '}
+                    {formatCurrency(
+                      weightedModalItem.salePrice || weightedModalItem.unitCost,
+                      settings.currency
+                    )}{' '}
+                    · الرصيد المتاح: {weightedModalItem.currentStock} {weightedModalItem.unit}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWeightedModalItem(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-300 font-bold block mb-1.5">
+                  أوزان سريعة شائعة:
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { label: 'ربع كيلو (250 جم)', grams: 250 },
+                    { label: 'نصف كيلو (500 جم)', grams: 500 },
+                    { label: 'كيلو إلا ربع (750 جم)', grams: 750 },
+                    { label: '1 كيلو (1000 جم)', grams: 1000 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.grams}
+                      type="button"
+                      onClick={() => {
+                        setWeightGramsStr(String(preset.grams));
+                        const pricePerKgMajor =
+                          (weightedModalItem.salePrice || weightedModalItem.unitCost) / 100;
+                        setWeightAmountMajorStr(
+                          ((preset.grams / 1000) * pricePerKgMajor).toFixed(2)
+                        );
+                      }}
+                      className="p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-[10px] font-bold text-sky-300 cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-bold block mb-1">
+                    الوزن المطلوب بالجرام (جم):
+                  </label>
+                  <input
+                    type="number"
+                    min="10"
+                    step="10"
+                    value={weightGramsStr}
+                    onChange={(e) => {
+                      const g = Number(e.target.value || 0);
+                      setWeightGramsStr(e.target.value);
+                      const pricePerKgMajor =
+                        (weightedModalItem.salePrice || weightedModalItem.unitCost) / 100;
+                      setWeightAmountMajorStr(((g / 1000) * pricePerKgMajor).toFixed(2));
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-mono text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-amber-300 font-bold block mb-1">
+                    أو اكتب المبلغ المطلوب ({settings.currency}):
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={weightAmountMajorStr}
+                    onChange={(e) => {
+                      const amt = Number(e.target.value || 0);
+                      setWeightAmountMajorStr(e.target.value);
+                      const pricePerKgMajor =
+                        (weightedModalItem.salePrice || weightedModalItem.unitCost) / 100;
+                      if (pricePerKgMajor > 0) {
+                        const calcGrams = Math.round((amt / pricePerKgMajor) * 1000);
+                        setWeightGramsStr(String(calcGrams));
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3 py-2 text-sm font-mono text-amber-300 font-black"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] text-slate-400 block">الكمية المخصومة من المخزون:</span>
+                  <strong className="font-mono text-sky-400 text-sm">
+                    {(Number(weightGramsStr || 0) / 1000).toFixed(3)} {weightedModalItem.unit || 'كجم'}
+                  </strong>
+                </div>
+                <div className="text-left">
+                  <span className="text-[11px] text-slate-400 block">إجمالي السعر المحسوب:</span>
+                  <strong className="font-mono text-emerald-400 text-base">
+                    {formatCurrency(
+                      Math.round(Number(weightAmountMajorStr || 0) * 100),
+                      settings.currency
+                    )}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const weightKg = Number((Number(weightGramsStr || 0) / 1000).toFixed(3));
+                    const totalMinor = Math.round(Number(weightAmountMajorStr || 0) * 100);
+                    const dish = sellableDishes.find((d) => d.id === weightedModalItem.id);
+                    if (dish && weightKg > 0 && totalMinor > 0) {
+                      handleAddToCart(dish, {
+                        nameSuffix: `وزن ${weightGramsStr} جرام`,
+                        unitPriceOverride: totalMinor,
+                        unitCostOverride: Math.round(weightedModalItem.unitCost * weightKg),
+                        qtyOverride: 1,
+                        stockDeductMultiplier: weightKg,
+                        notes: `بيع فرط بالوزن: ${weightGramsStr} جم (${weightKg} ${weightedModalItem.unit})`,
+                      });
+                      setWeightedModalItem(null);
+                    }
+                  }}
+                  className="flex-1 py-2.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-xl text-xs cursor-pointer"
+                >
+                  إضافة الوزن للفاتورة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWeightedModalItem(null)}
+                  className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: APPAREL SIZE & COLOR MATRIX PICKER */}
+      {variantModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Shirt className="w-5 h-5 text-purple-400" />
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    اختر المقاس واللون: {variantModalItem.name}
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    سعر القطعة:{' '}
+                    {formatCurrency(
+                      variantModalItem.salePrice || variantModalItem.unitCost,
+                      settings.currency
+                    )}{' '}
+                    {variantModalItem.season ? `· موسم: ${variantModalItem.season}` : ''}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVariantModalItem(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+              {(variantModalItem.variants || []).map((v: ApparelVariant) => {
+                const dish = sellableDishes.find((d) => d.id === variantModalItem.id);
+                const outOfStock = v.stock <= 0;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    disabled={outOfStock}
+                    onClick={() => {
+                      if (!dish) return;
+                      handleAddToCart(dish, {
+                        nameSuffix: `مقاس ${v.size} - ${v.color}`,
+                        variantId: v.id,
+                        notes: `مقاس: ${v.size} | لون: ${v.color}`,
+                      });
+                      setVariantModalItem(null);
+                    }}
+                    className={`p-3 rounded-2xl border text-right transition-all flex items-center justify-between ${
+                      outOfStock
+                        ? 'bg-slate-950/50 border-slate-800 text-slate-600 cursor-not-allowed'
+                        : 'bg-slate-950 hover:bg-purple-500/15 border-slate-800 hover:border-purple-500/50 text-white cursor-pointer'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-xs font-black text-purple-300">
+                        مقاس: <span className="font-mono text-white">{v.size}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">اللون: {v.color}</div>
+                    </div>
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                        outOfStock
+                          ? 'bg-rose-500/10 text-rose-400'
+                          : 'bg-emerald-500/15 text-emerald-300'
+                      }`}
+                    >
+                      {outOfStock ? 'نافد' : `${v.stock} ق`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: PHARMACY ACTIVE INGREDIENT ALTERNATIVES FINDER */}
+      {alternativesIngredient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Pill className="w-5 h-5 text-emerald-400" />
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    البدائل المثيلة بنفس المادة الفعالة
+                  </h4>
+                  <span className="text-[11px] font-mono text-emerald-300">
+                    المادة الفعالة: {alternativesIngredient}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAlternativesIngredient(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {inventory
+                .filter(
+                  (i) =>
+                    i.activeIngredient &&
+                    i.activeIngredient.toLowerCase() === alternativesIngredient.toLowerCase()
+                )
+                .map((alt) => {
+                  const dish = sellableDishes.find((d) => d.id === alt.id);
+                  const expired = Boolean(alt.expiryDate && alt.expiryDate < todayIso);
+                  return (
+                    <div
+                      key={alt.id}
+                      className="p-3 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <div className="font-black text-white">{alt.name}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          الرصيد: <span className="font-mono text-emerald-400">{alt.currentStock}</span> {alt.unit} · السعر:{' '}
+                          <span className="font-mono text-amber-400">
+                            {formatCurrency(alt.salePrice || alt.unitCost, settings.currency)}
+                          </span>
+                          {alt.subUnitsPerPack && alt.subUnitsPerPack > 1
+                            ? ` (${alt.subUnitsPerPack} ${alt.subUnitName || 'شريط'})`
+                            : ''}
+                        </div>
+                        {alt.dosageInstruction && (
+                          <div className="text-[10px] text-sky-300 mt-0.5">
+                            📋 الجرعة: {alt.dosageInstruction}
+                          </div>
+                        )}
+                      </div>
+
+                      {dish && !expired && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleAddToCart(dish, {
+                              notes: alt.dosageInstruction || undefined,
+                            });
+                            setAlternativesIngredient(null);
+                          }}
+                          className="py-1.5 px-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs cursor-pointer shrink-0"
+                        >
+                          + اختيار البديل
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ELECTRONICS SERIAL NUMBER (IMEI) & WARRANTY PICKER */}
+      {serialModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    اختر السيريال (IMEI / S-N) وشهادة الضمان
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    {serialModalItem.name} · 🛡️ ضمان معتمد:{' '}
+                    {serialModalItem.warrantyMonths || 12} شهر
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSerialModalItem(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="text-slate-300 font-bold">
+                الأرقام التسلسلية المتاحة في المخزن ({serialModalItem.serialNumbers?.length || 0}):
+              </div>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {(serialModalItem.serialNumbers || []).map((sn) => {
+                  const dish = sellableDishes.find((d) => d.id === serialModalItem.id);
+                  return (
+                    <button
+                      key={sn}
+                      type="button"
+                      onClick={() => {
+                        if (!dish) return;
+                        const warrantyNote = serialModalItem.warrantyMonths
+                          ? ` | ضمان معتمد: ${serialModalItem.warrantyMonths} شهر`
+                          : '';
+                        handleAddToCart(dish, {
+                          nameSuffix: `سيريال: ${sn}`,
+                          serialNumber: sn,
+                          notes: `شهادة ضمان وسيريال: ${sn}${warrantyNote}`,
+                        });
+                        setSerialModalItem(null);
+                      }}
+                      className="w-full p-3 bg-slate-950 hover:bg-amber-500/15 border border-slate-800 hover:border-amber-500/50 rounded-2xl flex items-center justify-between text-right cursor-pointer transition-all"
+                    >
+                      <div>
+                        <div className="font-mono font-black text-amber-400 text-sm">
+                          {sn}
+                        </div>
+                        <div className="text-[10px] text-emerald-300">
+                          🛡️ يطبع في الفاتورة كشهادة ضمان ({serialModalItem.warrantyMonths || 12} شهر)
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 bg-amber-500 text-slate-950 font-black rounded-lg text-[11px]">
+                        اختيار للبيع
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 space-y-2">
+                <label className="block text-slate-400">
+                  أو امسح / أدخل سيريال يدوياً:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customSerialInput}
+                    onChange={(e) => setCustomSerialInput(e.target.value)}
+                    placeholder="IMEI-359..."
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customSerialInput.trim()) return;
+                      const dish = sellableDishes.find((d) => d.id === serialModalItem.id);
+                      if (!dish) return;
+                      const sn = customSerialInput.trim();
+                      const warrantyNote = serialModalItem.warrantyMonths
+                        ? ` | ضمان معتمد: ${serialModalItem.warrantyMonths} شهر`
+                        : '';
+                      handleAddToCart(dish, {
+                        nameSuffix: `سيريال: ${sn}`,
+                        serialNumber: sn,
+                        notes: `شهادة ضمان وسيريال: ${sn}${warrantyNote}`,
+                      });
+                      setSerialModalItem(null);
+                    }}
+                    className="px-3 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-xl cursor-pointer"
+                  >
+                    إضافة بالسيريال
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SERVICE TICKETS / BEAUTY APPOINTMENTS / LAUNDRY ORDERS SETTLEMENT */}
+      {showServiceTicketsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-purple-400" />
+                <div>
+                  <h4 className="text-sm font-black text-white">
+                    تذاكر الصيانة، حجوزات الجلسات، وأوامر المغسلة الجاهزة للتحصيل
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    استدعِ أي تذكرة إلى سلة الكاشير لتحصيل المبلغ المتبقي وطباعة فاتورة التسليم والضمان
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowServiceTicketsModal(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1 text-xs">
+              {serviceTickets.filter((t) => !t.isSettled && t.status !== 'cancelled').length ===
+              0 ? (
+                <div className="py-10 text-center text-slate-500">
+                  لا توجد تذاكر صيانة أو حجوزات أو أوامر غسيل غير مسددة حالياً
+                </div>
+              ) : (
+                serviceTickets
+                  .filter((t) => !t.isSettled && t.status !== 'cancelled')
+                  .map((tkt) => {
+                    const remainingMinor = Math.max(
+                      0,
+                      tkt.totalAmountMinor - tkt.depositPaidMinor
+                    );
+                    const totalCostMinor = (tkt.partsUsed || []).reduce(
+                      (s, p) => s + p.unitCostMinor * p.qty,
+                      0
+                    );
+                    return (
+                      <div
+                        key={tkt.id}
+                        className="p-3.5 bg-slate-950 border border-slate-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-amber-400">
+                              {tkt.ticketNumber}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 text-[10px] font-bold">
+                              {tkt.ticketType === 'repair'
+                                ? '🛠️ صيانة وإصلاح'
+                                : tkt.ticketType === 'appointment'
+                                ? '💈 حجز جلسة'
+                                : '🧺 مغسلة ودراي كلين'}
+                            </span>
+                            <span className="font-bold text-white">
+                              {tkt.itemOrServiceTitle}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-sky-300">
+                            العميل: {tkt.customerName}{' '}
+                            {tkt.customerPhone ? `(${tkt.customerPhone})` : ''}
+                            {tkt.serialOrTagNumber
+                              ? ` · المعرف/التاج: ${tkt.serialOrTagNumber}`
+                              : ''}
+                          </div>
+                          {tkt.assignedEmployeeName && (
+                            <div className="text-[10px] text-slate-400">
+                              👨‍🔧 المنفذ: {tkt.assignedEmployeeName} · الموعد:{' '}
+                              {tkt.appointmentDate} {tkt.appointmentTime}
+                            </div>
+                          )}
+                          <div className="text-[11px] font-mono text-slate-300">
+                            الإجمالي:{' '}
+                            {formatCurrency(tkt.totalAmountMinor, settings.currency)}{' '}
+                            {tkt.depositPaidMinor > 0
+                              ? `| عربون مدفوع: ${formatCurrency(
+                                  tkt.depositPaidMinor,
+                                  settings.currency
+                                )} `
+                              : ''}
+                            |{' '}
+                            <strong className="text-emerald-400">
+                              المطلوب تحصيله الآن:{' '}
+                              {formatCurrency(remainingMinor, settings.currency)}
+                            </strong>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setPrintingServiceTicket(tkt)}
+                            className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold rounded-xl text-xs cursor-pointer flex items-center gap-1.5"
+                            title="طباعة إيصال الاستلام أو ملصق التاج"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>طباعة الإيصال/التاج</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const fallbackTarget = sellableDishes[0];
+                              if (!fallbackTarget) {
+                                setErrorMsg('يرجى وجود صنف واحد على الأقل في الكتالوج لإدراج التذكرة.');
+                                return;
+                              }
+                              handleAddToCart(fallbackTarget, {
+                                nameSuffix: `تذكرة ${tkt.ticketNumber}: ${tkt.itemOrServiceTitle}`,
+                                unitPriceOverride: remainingMinor,
+                                unitCostOverride: totalCostMinor,
+                                qtyOverride: 1,
+                                stockDeductMultiplier: 0,
+                                serviceTicketId: tkt.id,
+                                notes: `تسليم تذكرة ${tkt.ticketNumber} | العميل: ${
+                                  tkt.customerName
+                                }${
+                                  tkt.serialOrTagNumber
+                                    ? ` | ${tkt.serialOrTagNumber}`
+                                    : ''
+                                }${
+                                  tkt.assignedEmployeeName
+                                    ? ` | تنفيذ: ${tkt.assignedEmployeeName}`
+                                    : ''
+                                }`,
+                              });
+                              setOrderNotes(
+                                (prev) =>
+                                  `${prev ? prev + ' | ' : ''}تذكرة #${tkt.ticketNumber} - ${
+                                    tkt.customerName
+                                  }`
+                              );
+                              setShowServiceTicketsModal(false);
+                              setSuccessBanner(
+                                `✅ تم إدراج التذكرة (${tkt.ticketNumber}) للعميل ${tkt.customerName} في السلة لتحصيل المتبقي (${formatCurrency(
+                                  remainingMinor,
+                                  settings.currency
+                                )})`
+                              );
+                              setTimeout(() => setSuccessBanner(''), 4500);
+                            }}
+                            className="py-2 px-3.5 bg-purple-500 hover:bg-purple-400 text-slate-950 font-black rounded-xl text-xs cursor-pointer shrink-0"
+                          >
+                            + استدعاء للسلة والتحصيل
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT SERVICE TICKET / TAG MODAL FROM POS */}
+      {printingServiceTicket && (
+        <ServiceTicketPrintModal
+          ticket={printingServiceTicket}
+          settings={settings}
+          onClose={() => setPrintingServiceTicket(null)}
+        />
+      )}
+
+      {/* MOBILE QUICK POS & DRIVER VIEW */}
+      {showMobileQuickView && (
+        <MobileQuickPOSView
+          settings={settings}
+          activeShift={activeShift}
+          inventory={inventory}
+          menuItems={menuItems}
+          customers={customers}
+          onOrderCompleted={(order) => {
+            onOrderCompleted(order, true, 'customer_invoice');
+          }}
+          onClose={() => setShowMobileQuickView(false)}
+          onRefresh={() => {
+            refreshOpenOrders();
+            onRefresh();
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { BusinessType, RestaurantSettings } from '../types';
-import { StorageService } from '../services/storage';
+import { BusinessSpecialtyProfile, RestaurantSettings } from '../types';
+import { getSpecialtyProfileLabel, StorageService } from '../services/storage';
 import {
   AlertOctagon,
   AlertTriangle,
@@ -8,15 +8,19 @@ import {
   Cpu,
   Database,
   Download,
-  FileSpreadsheet,
-  PackageCheck,
+  Heart,
+  Pill,
   RefreshCw,
   RotateCcw,
+  Scissors,
   ShieldAlert,
+  Shirt,
+  Smartphone,
   Sparkles,
   Store,
   Trash2,
   UtensilsCrossed,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -34,7 +38,9 @@ export const DeveloperDataTools: React.FC<Props> = ({
   onRestartOnboarding,
 }) => {
   // Mock data type selection
-  const [mockType, setMockType] = useState<BusinessType>(settings.businessType || 'restaurant');
+  const [mockType, setMockType] = useState<BusinessSpecialtyProfile>(
+    settings.specialtyProfile || (settings.businessType === 'retail' ? 'supermarket' : 'restaurant')
+  );
 
   // Wipe mode selection
   const [wipeMode, setWipeMode] = useState<'operational_only' | 'complete_reset'>(
@@ -87,7 +93,7 @@ export const DeveloperDataTools: React.FC<Props> = ({
       onRefresh();
       setConfirmModalType(null);
       setTypedConfirmation('');
-      showMsg(`تم تحميل البيانات التجريبية (${mockType === 'restaurant' ? 'مطعم' : 'تجزئة'}) بنجاح!`);
+      showMsg(`تم تحميل البيانات التجريبية (${getSpecialtyProfileLabel(mockType)}) بنجاح!`);
     } catch {
       showMsg('حدث خطأ أثناء تحميل البيانات التجريبية', 'error');
     } finally {
@@ -242,33 +248,73 @@ export const DeveloperDataTools: React.FC<Props> = ({
             </p>
 
             <div className="pt-2">
-              <label className="font-bold text-slate-300 block mb-2">نوع النشاط التجريبي:</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMockType('restaurant')}
-                  className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${
-                    mockType === 'restaurant'
-                      ? 'bg-amber-500/15 border-amber-500 text-amber-300 font-bold'
-                      : 'bg-slate-900 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  <UtensilsCrossed className="w-4 h-4 shrink-0" />
-                  <span className="text-[11px]">مطعم ومشويات</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setMockType('retail')}
-                  className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${
-                    mockType === 'retail'
-                      ? 'bg-amber-500/15 border-amber-500 text-amber-300 font-bold'
-                      : 'bg-slate-900 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  <Store className="w-4 h-4 shrink-0" />
-                  <span className="text-[11px]">سوبر ماركت وتجزئة</span>
-                </button>
+              <label className="font-bold text-slate-300 block mb-2">
+                نوع النشاط التجريبي المتخصص:
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(
+                  [
+                    {
+                      id: 'restaurant',
+                      label: 'مطعم ومشويات',
+                      icon: <UtensilsCrossed className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'supermarket',
+                      label: 'سوبر ماركت',
+                      icon: <Store className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'pet_store',
+                      label: 'حيوانات أليفة',
+                      icon: <Heart className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'apparel',
+                      label: 'ملابس وأحذية',
+                      icon: <Shirt className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'pharmacy',
+                      label: 'صيدلية وأدوية',
+                      icon: <Pill className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'electronics',
+                      label: 'موبايلات وإلكترونيات',
+                      icon: <Smartphone className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'service_center',
+                      label: 'مركز صيانة وإصلاح',
+                      icon: <Wrench className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'beauty_clinic',
+                      label: 'بيوتي سنتر وعيادة',
+                      icon: <Scissors className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                    {
+                      id: 'laundry',
+                      label: 'مغسلة ودراي كلين',
+                      icon: <Sparkles className="w-3.5 h-3.5 shrink-0" />,
+                    },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setMockType(item.id)}
+                    className={`p-2 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-all ${
+                      mockType === item.id
+                        ? 'bg-amber-500/15 border-amber-500 text-amber-300 font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {item.icon}
+                    <span className="text-[11px] truncate">{item.label}</span>
+                  </button>
+                ))}
               </div>
             </div>
           </div>

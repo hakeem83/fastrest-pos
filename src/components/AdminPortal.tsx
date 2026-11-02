@@ -29,6 +29,9 @@ import { CloudSyncAndCredentialsVault } from './CloudSyncAndCredentialsVault';
 import { FinancialReportsCenter } from './FinancialReportsCenter';
 import { ErrorCorrectionHub } from './ErrorCorrectionHub';
 import { HRManagementSuite } from './HRManagementSuite';
+import { SpecialtyOperationsHub } from './SpecialtyOperationsHub';
+import { TenantsManager } from './TenantsManager';
+import { DesktopInstallModal } from './DesktopInstallModal';
 import {
   BarChart3,
   Bike,
@@ -44,15 +47,45 @@ import {
   KeyRound,
   Landmark,
   LogOut,
+  MonitorDown,
   Package,
   RotateCcw,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Ticket,
   UserCheck,
   Users,
 } from 'lucide-react';
+
+export type AdminTab =
+  | 'tenants'
+  | 'cloud_vault'
+  | 'specialty_hub'
+  | 'financial_reports'
+  | 'error_correction'
+  | 'hr_management'
+  | 'users_roles'
+  | 'partners_staff'
+  | 'customers_credit'
+  | 'suppliers_credit'
+  | 'promotions'
+  | 'kitchen_drivers'
+  | 'inventory'
+  | 'recipes'
+  | 'master_data'
+  | 'shifts_history'
+  | 'branding'
+  | 'dev_tools';
+
+export type AdminCategory =
+  | 'tenants'
+  | 'finance'
+  | 'operations'
+  | 'inventory'
+  | 'people'
+  | 'system';
 
 interface Props {
   settings: RestaurantSettings;
@@ -69,23 +102,7 @@ interface Props {
   employees?: Employee[];
   vouchers?: Voucher[];
   isOpen: boolean;
-  initialTab?:
-    | 'cloud_vault'
-    | 'financial_reports'
-    | 'error_correction'
-    | 'hr_management'
-    | 'users_roles'
-    | 'partners_staff'
-    | 'customers_credit'
-    | 'suppliers_credit'
-    | 'promotions'
-    | 'kitchen_drivers'
-    | 'inventory'
-    | 'recipes'
-    | 'master_data'
-    | 'shifts_history'
-    | 'branding'
-    | 'dev_tools';
+  initialTab?: AdminTab;
   onClose: () => void;
   onRefresh: () => void;
   onSettingsUpdated: (newSettings: RestaurantSettings) => void;
@@ -134,31 +151,51 @@ export const AdminPortal: React.FC<Props> = ({
   const [pinError, setPinError] = useState<string>('');
 
   // Platform-wide tools (Multi-branch switcher, Cloud Credentials Vault, Developer Mock/Wipe tools)
-  // are strictly visible ONLY to the Super Admin / Partner Owner when not locked as a normal staff member
   const canViewPlatformSuperAdminTools =
-    unlockedWithMasterPin ||
-    (currentUser.role === 'partner' && !StorageService.isProductionBranchLocked());
+    currentUser.role === 'partner' || unlockedWithMasterPin;
 
-  const [activeTab, setActiveTab] = useState<
-    | 'cloud_vault'
-    | 'financial_reports'
-    | 'error_correction'
-    | 'hr_management'
-    | 'users_roles'
-    | 'partners_staff'
-    | 'customers_credit'
-    | 'suppliers_credit'
-    | 'promotions'
-    | 'kitchen_drivers'
-    | 'inventory'
-    | 'recipes'
-    | 'master_data'
-    | 'shifts_history'
-    | 'branding'
-    | 'dev_tools'
-  >(
-    initialTab || 'financial_reports'
+  const getCategoryForTab = (tab: AdminTab): AdminCategory => {
+    if (tab === 'tenants') return 'tenants';
+    if (
+      tab === 'financial_reports' ||
+      tab === 'partners_staff' ||
+      tab === 'error_correction'
+    )
+      return 'finance';
+    if (
+      tab === 'specialty_hub' ||
+      tab === 'kitchen_drivers' ||
+      tab === 'shifts_history'
+    )
+      return 'operations';
+    if (tab === 'inventory' || tab === 'recipes' || tab === 'promotions')
+      return 'inventory';
+    if (
+      tab === 'hr_management' ||
+      tab === 'customers_credit' ||
+      tab === 'suppliers_credit' ||
+      tab === 'users_roles'
+    )
+      return 'people';
+    return 'system';
+  };
+
+  const [activeTab, setActiveTab] = useState<AdminTab>(initialTab || 'tenants');
+  const [activeCategory, setActiveCategory] = useState<AdminCategory>(() =>
+    getCategoryForTab(initialTab || 'tenants')
   );
+  const [showDesktopInstall, setShowDesktopInstall] = useState<boolean>(false);
+
+  const handleCategoryClick = (cat: AdminCategory) => {
+    setActiveCategory(cat);
+    if (cat === 'tenants') setActiveTab('tenants');
+    else if (cat === 'finance') setActiveTab('financial_reports');
+    else if (cat === 'operations') setActiveTab('specialty_hub');
+    else if (cat === 'inventory') setActiveTab('inventory');
+    else if (cat === 'people') setActiveTab('hr_management');
+    else if (cat === 'system')
+      setActiveTab(canViewPlatformSuperAdminTools ? 'cloud_vault' : 'master_data');
+  };
 
   if (!isOpen) return null;
 
@@ -270,295 +307,405 @@ export const AdminPortal: React.FC<Props> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                {canViewPlatformSuperAdminTools && onOpenBusinessSwitcher && (
-                  <button
-                    type="button"
-                    onClick={onOpenBusinessSwitcher}
-                    className="flex items-center gap-1.5 py-1.5 px-2.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                    title="التبديل بين المطاعم والأنشطة أو إنشاء منشأة جديدة (للأدمين العام فقط)"
-                  >
-                    <Building2 className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="hidden sm:inline">الأنشطة ({StorageService.getBusinesses().length})</span>
-                  </button>
-                )}
-
-                {canViewPlatformSuperAdminTools && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('cloud_vault')}
-                      className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
-                        activeTab === 'cloud_vault'
-                          ? 'bg-sky-500 text-slate-950 border-sky-400'
-                          : 'bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border-sky-500/30'
-                      }`}
-                      title="مركز المزامنة السحابية للفروع وخزينة الكلمات السرية (للأدمين العام فقط)"
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="hidden sm:inline">السحابة والكلمات السرية</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('dev_tools')}
-                      className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
-                        activeTab === 'dev_tools'
-                          ? 'bg-amber-500 text-slate-950 border-amber-400'
-                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
-                      }`}
-                      title="أدوات المطور: تبديل ببيانات تجريبية أو تصفير البيانات (للأدمين العام فقط)"
-                    >
-                      <Cpu className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="hidden sm:inline">أدوات المطور</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={onRestartOnboarding}
-                      className="flex items-center gap-1 py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition-colors cursor-pointer"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="hidden sm:inline">إعادة التهيئة</span>
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowDesktopInstall(true)}
+                  className="flex items-center gap-1.5 py-1.5 px-3 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  title="تثبيت التطبيق كبرنامج مستقل على سطح المكتب للكمبيوتر"
+                >
+                  <MonitorDown className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">تثبيت سطح المكتب (PWA)</span>
+                </button>
 
                 <button
                   type="button"
                   onClick={() => StorageService.exportToExcel()}
-                  className="flex items-center gap-1 py-1.5 px-2.5 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 py-1.5 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  title="تصدير شيت إكسيل لكافة السجلات المالية"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="hidden sm:inline">تصدير Excel</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex items-center gap-1.5 py-1.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                  className="flex items-center gap-1.5 py-1.5 px-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>قفل وخروج للكاشير</span>
+                  <span>خروج للكاشير</span>
                 </button>
               </div>
             </div>
 
-            {/* Navigation Tabs */}
-            <div className="flex items-center gap-1.5 border-b border-slate-800 pb-3 mb-4 text-xs font-semibold overflow-x-auto">
-              {canViewPlatformSuperAdminTools && (
+            {/* 1. Categorized Top Navigation Bar (6 Balanced Main Modules - Guaranteed to fit on desktop screens) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800 mb-3 text-xs font-bold">
+              {/* Category 1: Tenants & Multi-Business Hub */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('tenants')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'tenants'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <Building2 className="w-4 h-4 shrink-0" />
+                <span className="truncate">المنشآت والفروع</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-black/20">
+                  {StorageService.getBusinesses().length}
+                </span>
+              </button>
+
+              {/* Category 2: Financial & Reports */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('finance')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'finance'
+                    ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 shrink-0" />
+                <span className="truncate">التقارير والمالية</span>
+              </button>
+
+              {/* Category 3: Specialty Verticals & Dispatch */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('operations')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'operations'
+                    ? 'bg-purple-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span className="truncate">الأنشطة التخصصية</span>
+              </button>
+
+              {/* Category 4: Inventory & Catalog */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('inventory')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'inventory'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <Package className="w-4 h-4 shrink-0" />
+                <span className="truncate">المخزون والمنتجات</span>
+              </button>
+
+              {/* Category 5: HR, Debt & Customers */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('people')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'people'
+                    ? 'bg-sky-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <Users className="w-4 h-4 shrink-0" />
+                <span className="truncate">الأفراد والذمم</span>
+              </button>
+
+              {/* Category 6: Cloud, System & Dev */}
+              <button
+                type="button"
+                onClick={() => handleCategoryClick('system')}
+                className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeCategory === 'system'
+                    ? 'bg-blue-500 text-slate-950 font-black shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                }`}
+              >
+                <Cloud className="w-4 h-4 shrink-0" />
+                <span className="truncate">السحابة والنظام</span>
+              </button>
+            </div>
+
+            {/* 2. Sub-Tabs Ribbon for the Active Category (Always compact, fully visible without cut-off) */}
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-3 mb-4 text-xs font-bold overflow-x-auto">
+              {activeCategory === 'tenants' && (
                 <button
-                  onClick={() => setActiveTab('cloud_vault')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                    activeTab === 'cloud_vault'
-                      ? 'bg-sky-500 text-slate-950 font-black border-sky-400'
-                      : 'bg-sky-500/10 text-sky-300 border-sky-500/30 hover:bg-sky-500/20'
-                  }`}
+                  type="button"
+                  onClick={() => setActiveTab('tenants')}
+                  className="py-1.5 px-3 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-2 cursor-pointer"
                 >
-                  <Cloud className="w-4 h-4" />
-                  <span>المزامنة السحابية والكلمات السرية</span>
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>دليل المنشآت والفروع وإضافة نشاط جديد ونسخ الروابط</span>
                 </button>
               )}
 
-              <button
-                onClick={() => setActiveTab('financial_reports')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                  activeTab === 'financial_reports'
-                    ? 'bg-emerald-500 text-slate-950 font-black border-emerald-400'
-                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span>التقارير المالية والأرباح (P&L · COGS)</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('error_correction')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                  activeTab === 'error_correction'
-                    ? 'bg-rose-500 text-white font-black border-rose-400'
-                    : 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
-                }`}
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span>تصحيح الأخطاء والقيود العكسية</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('hr_management')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                  activeTab === 'hr_management'
-                    ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
-                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-                }`}
-              >
-                <Briefcase className="w-4 h-4" />
-                <span>الموارد البشرية والرواتب والعمولات</span>
-              </button>
-
-              {currentPerms.canManageUsersAndRoles && (
-                <button
-                  onClick={() => setActiveTab('users_roles')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    activeTab === 'users_roles'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>المستخدمين والصلاحيات ({allUsers.length})</span>
-                </button>
+              {activeCategory === 'finance' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('financial_reports')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'financial_reports'
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>التقارير المالية والأرباح و COGS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('partners_staff')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'partners_staff'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Landmark className="w-3.5 h-3.5" />
+                    <span>الشركاء وحسابات السيولة (الأوعية الـ 6)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('error_correction')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'error_correction'
+                        ? 'bg-rose-500 text-white border-rose-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    <span>تصحيح الأخطاء والقيود العكسية</span>
+                  </button>
+                </>
               )}
 
-              <button
-                onClick={() => setActiveTab('partners_staff')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'partners_staff'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Landmark className="w-4 h-4" />
-                <span>الشركاء والموظفين والأوعية النقدية</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('customers_credit')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'customers_credit'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <UserCheck className="w-4 h-4" />
-                <span>العملاء وصلاحيات الآجل ({customers.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('suppliers_credit')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'suppliers_credit'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <CreditCard className="w-4 h-4" />
-                <span>الموردين والمشتريات الآجلة ({suppliers.length})</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('promotions')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'promotions'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Ticket className="w-4 h-4" />
-                <span>العروض والكوبونات</span>
-              </button>
-
-              {!isRetail && (
-                <button
-                  onClick={() => setActiveTab('kitchen_drivers')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    activeTab === 'kitchen_drivers'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Bike className="w-4 h-4" />
-                  <span>أقسام المطبخ والطيارين</span>
-                </button>
+              {activeCategory === 'operations' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('specialty_hub')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'specialty_hub'
+                        ? 'bg-purple-500 text-slate-950 border-purple-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>الأنشطة التخصصية (أليفة · بيوتي · سوبرماركت · صيدلية · ملابس)</span>
+                  </button>
+                  {!isRetail && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('kitchen_drivers')}
+                      className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeTab === 'kitchen_drivers'
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <Bike className="w-3.5 h-3.5" />
+                      <span>المطابخ والديسباتش والطيارين</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('shifts_history')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'shifts_history'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    <span>سجل الورديات المقفلة ({shifts.length})</span>
+                  </button>
+                </>
               )}
 
-              {currentPerms.canManageInventoryAndRecipes && (
-                <button
-                  onClick={() => setActiveTab('inventory')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    activeTab === 'inventory'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Package className="w-4 h-4" />
-                  <span>المخزون والتكاليف ({inventory.length})</span>
-                </button>
+              {activeCategory === 'inventory' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('inventory')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'inventory'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    <span>المخزون والمستودعات والتوالف ({inventory.length})</span>
+                  </button>
+                  {!isRetail && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('recipes')}
+                      className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeTab === 'recipes'
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <ChefHat className="w-3.5 h-3.5" />
+                      <span>المنيو والوصفات والتكاليف ({menuItems.length})</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('promotions')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'promotions'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Ticket className="w-3.5 h-3.5" />
+                    <span>العروض والكوبونات الترويجية</span>
+                  </button>
+                </>
               )}
 
-              {!isRetail && currentPerms.canManageInventoryAndRecipes && (
-                <button
-                  onClick={() => setActiveTab('recipes')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    activeTab === 'recipes'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <ChefHat className="w-4 h-4" />
-                  <span>المنيو والوصفات ({menuItems.length})</span>
-                </button>
+              {activeCategory === 'people' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('hr_management')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'hr_management'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Briefcase className="w-3.5 h-3.5" />
+                    <span>الموارد البشرية والرواتب والعمولات</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('customers_credit')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'customers_credit'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>العملاء وصلاحيات الآجل ({customers.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('suppliers_credit')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'suppliers_credit'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>الموردين وحسابات الآجل ({suppliers.length})</span>
+                  </button>
+                  {currentPerms.canManageUsersAndRoles && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('users_roles')}
+                      className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeTab === 'users_roles'
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>المستخدمين وصلاحيات الـ PIN ({allUsers.length})</span>
+                    </button>
+                  )}
+                </>
               )}
 
-              <button
-                onClick={() => setActiveTab('master_data')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'master_data'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <BookOpen className="w-4 h-4" />
-                <span>دليل الحسابات</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('shifts_history')}
-                className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === 'shifts_history'
-                    ? 'bg-amber-500 text-slate-950 font-bold'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <History className="w-4 h-4" />
-                <span>سجل الورديات ({shifts.length})</span>
-              </button>
-
-              {currentPerms.canManageUsersAndRoles && (
-                <button
-                  onClick={() => setActiveTab('branding')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    activeTab === 'branding'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Building2 className="w-4 h-4" />
-                  <span>الهوية والطباعة ورمز PIN</span>
-                </button>
-              )}
-
-              {canViewPlatformSuperAdminTools && (
-                <button
-                  onClick={() => setActiveTab('dev_tools')}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg transition-colors cursor-pointer whitespace-nowrap border ${
-                    activeTab === 'dev_tools'
-                      ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
-                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
-                  }`}
-                >
-                  <Cpu className="w-4 h-4 text-amber-400" />
-                  <span>أدوات المطور والبيانات (Mock & Wipe)</span>
-                </button>
+              {activeCategory === 'system' && (
+                <>
+                  {canViewPlatformSuperAdminTools && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('cloud_vault')}
+                      className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeTab === 'cloud_vault'
+                          ? 'bg-sky-500 text-slate-950 border-sky-400 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>المزامنة السحابية والكلمات السرية</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('master_data')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'master_data'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>دليل الحسابات والبيانات الأساسية</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('branding')}
+                    className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      activeTab === 'branding'
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>الهوية والطباعة ورمز PIN</span>
+                  </button>
+                  {canViewPlatformSuperAdminTools && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('dev_tools')}
+                      className={`py-1.5 px-3 rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeTab === 'dev_tools'
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span>أدوات المطور وتصفير البيانات</span>
+                    </button>
+                  )}
+                </>
               )}
             </div>
 
             {/* Tab Content */}
             <div className="flex-1 overflow-y-auto pr-1">
+              {activeTab === 'tenants' && (
+                <TenantsManager
+                  onRefresh={onRefresh}
+                  onBusinessSwitched={onRefresh}
+                  onRestartOnboarding={onRestartOnboarding}
+                  onOpenDesktopInstallModal={() => setShowDesktopInstall(true)}
+                />
+              )}
+
               {activeTab === 'cloud_vault' && canViewPlatformSuperAdminTools && (
                 <CloudSyncAndCredentialsVault
                   settings={settings}
                   users={allUsers}
                   onRefresh={onRefresh}
+                />
+              )}
+
+              {activeTab === 'specialty_hub' && (
+                <SpecialtyOperationsHub
+                  settings={settings}
+                  inventory={inventory}
+                  onRefresh={onRefresh}
+                  onSettingsUpdated={onSettingsUpdated}
                 />
               )}
 
@@ -693,6 +840,16 @@ export const AdminPortal: React.FC<Props> = ({
               )}
             </div>
           </>
+        )}
+
+        {showDesktopInstall && (
+          <DesktopInstallModal
+            onClose={() => setShowDesktopInstall(false)}
+            canTriggerDirect={true}
+            onTriggerNativeInstall={() => {
+              setShowDesktopInstall(false);
+            }}
+          />
         )}
       </div>
     </div>

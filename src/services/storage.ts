@@ -5,9 +5,13 @@ import {
   AttendanceRecord,
   AuditCorrectionLog,
   BusinessBackupBundle,
+  BusinessSpecialtyProfile,
+  BusinessType,
   Customer,
   DeliveryDriver,
+  DriverSettlementRecord,
   Employee,
+  ExtendedFinancialContainerType,
   FinancialContainerType,
   HRAdjustment,
   InventoryItem,
@@ -20,10 +24,13 @@ import {
   PaymentMethod,
   PaymentStatus,
   PayrollSettlement,
+  PetFeedingCycle,
+  PetProfile,
   Promotion,
   RestaurantSettings,
   RolePermissions,
   SaleOrder,
+  ServiceTicket,
   Shift,
   ShiftCashCalculation,
   Supplier,
@@ -58,7 +65,49 @@ const KEYS = {
   ATTENDANCE_LOGS: 'fastrest_attendance_logs_v2',
   HR_ADJUSTMENTS: 'fastrest_hr_adjustments_v2',
   PAYROLL_SETTLEMENTS: 'fastrest_payroll_settlements_v2',
+  PET_PROFILES: 'fastrest_pet_profiles_v2',
+  PET_FEEDING_CYCLES: 'fastrest_pet_feeding_cycles_v2',
+  SERVICE_TICKETS: 'fastrest_service_tickets_v2',
+  DRIVER_SETTLEMENTS: 'fastrest_driver_settlements_v2',
 };
+
+export function getSpecialtyProfileLabel(
+  profile?: BusinessSpecialtyProfile,
+  fallbackType?: BusinessType
+): string {
+  const effective =
+    profile || (fallbackType === 'retail' ? 'supermarket' : 'restaurant');
+  switch (effective) {
+    case 'restaurant':
+      return 'مطعم وكافيه ومشويات';
+    case 'supermarket':
+      return 'سوبر ماركت وبقالة وميزان';
+    case 'pet_store':
+      return 'متجر وعيادة الحيوانات الأليفة';
+    case 'apparel':
+      return 'ملابس وأحذية وأزياء (مقاسات وألوان)';
+    case 'pharmacy':
+      return 'صيدلية ومستحضرات تجميل';
+    case 'electronics':
+      return 'موبايلات وإلكترونيات (سيريال IMEI وضمان)';
+    case 'service_center':
+      return 'مركز صيانة وورش إصلاح وأوامر شغل';
+    case 'beauty_clinic':
+      return 'بيوتي سنتر وعيادات وسبا (حجوزات وباقات)';
+    case 'laundry':
+      return 'مغسلة ودراي كلين (استلام وتسليم وتاج)';
+    case 'general_retail':
+    default:
+      return 'تجارة تجزئة عامة';
+  }
+}
+
+export function getActiveSpecialtyProfile(
+  settings?: RestaurantSettings
+): BusinessSpecialtyProfile {
+  if (settings?.specialtyProfile) return settings.specialtyProfile;
+  return settings?.businessType === 'retail' ? 'supermarket' : 'restaurant';
+}
 
 export function getOrderTypeLabel(type?: OrderType): string {
   switch (type) {
@@ -215,6 +264,26 @@ export function getFinancialContainerLabel(container?: FinancialContainerType): 
       return 'الحساب البنكي / فيزا';
     case 'ewallet_instapay':
       return 'محفظة إلكترونية / إنستاباي';
+    case 'shift_drawer':
+    default:
+      return 'درج نقدية الكاشير (الوردية)';
+  }
+}
+
+export function getExtendedFinancialContainerLabel(
+  container?: ExtendedFinancialContainerType | string
+): string {
+  switch (container) {
+    case 'main_safe':
+      return 'الخزينة الرئيسية للفرع';
+    case 'bank_account':
+      return 'الحساب البنكي / فيزا الشبكة';
+    case 'ewallet_instapay':
+      return 'المحافظ الإلكترونية وإنستاباي';
+    case 'driver_custody':
+      return 'عهد سائقي وكباتن التوصيل';
+    case 'partner_equity':
+      return 'الحسابات الجارية للشركاء';
     case 'shift_drawer':
     default:
       return 'درج نقدية الكاشير (الوردية)';
@@ -1133,6 +1202,8 @@ export class StorageService {
       attendanceLogs: this.getAttendanceLogs(),
       hrAdjustments: this.getHRAdjustments(),
       payrollSettlements: this.getPayrollSettlements(),
+      petProfiles: this.getPetProfiles(),
+      serviceTickets: this.getServiceTickets(),
     };
   }
 
@@ -1163,6 +1234,8 @@ export class StorageService {
     if (bundle.attendanceLogs) this.saveAttendanceLogs(bundle.attendanceLogs);
     if (bundle.hrAdjustments) this.saveHRAdjustments(bundle.hrAdjustments);
     if (bundle.payrollSettlements) this.savePayrollSettlements(bundle.payrollSettlements);
+    if (bundle.petProfiles) this.savePetProfiles(bundle.petProfiles);
+    if (bundle.serviceTickets) this.saveServiceTickets(bundle.serviceTickets);
 
     localStorage.setItem(KEYS.ACTIVE_BUSINESS_ID, bundle.business.id);
   }
@@ -1213,6 +1286,7 @@ export class StorageService {
     name: string;
     branchName: string;
     businessType: 'restaurant' | 'retail';
+    specialtyProfile?: BusinessSpecialtyProfile;
     currency: string;
     phone?: string;
     address?: string;
@@ -1224,13 +1298,20 @@ export class StorageService {
     const currentBizId = this.getActiveBusinessId();
     this.saveBusinessSnapshot(currentBizId);
 
+    const specialty: BusinessSpecialtyProfile =
+      params.specialtyProfile ||
+      (params.businessType === 'retail' ? 'supermarket' : 'restaurant');
+    const resolvedBusinessType: BusinessType =
+      specialty === 'restaurant' ? 'restaurant' : 'retail';
+
     // 2. Generate new business ID
     const newBizId = `biz-${Date.now()}`;
     const newBiz: TenantBusiness = {
       id: newBizId,
       name: params.name.trim(),
       branchName: params.branchName.trim() || 'الفرع الرئيسي',
-      businessType: params.businessType,
+      businessType: resolvedBusinessType,
+      specialtyProfile: specialty,
       currency: params.currency.trim() || 'ج.م',
       phone: params.phone?.trim() || '',
       address: params.address?.trim() || '',
@@ -1251,6 +1332,7 @@ export class StorageService {
       restaurantName: newBiz.name,
       branchName: newBiz.branchName,
       businessType: newBiz.businessType,
+      specialtyProfile: specialty,
       currency: newBiz.currency,
       phone: newBiz.phone || '',
       address: newBiz.address || '',
@@ -1336,6 +1418,8 @@ export class StorageService {
     this.saveAttendanceLogs([]);
     this.saveHRAdjustments([]);
     this.savePayrollSettlements([]);
+    this.savePetProfiles([]);
+    this.saveServiceTickets([]);
 
     // Save snapshot of this freshly initialized business
     this.saveBusinessSnapshot(newBizId);
@@ -1381,6 +1465,20 @@ export class StorageService {
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+  }
+
+  static getDirectBusinessUrl(bizId?: string): string {
+    const targetId = bizId || this.getActiveBusinessId();
+    if (typeof window === 'undefined') return `?biz=${targetId}`;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('biz', targetId);
+      url.searchParams.delete('branch');
+      url.searchParams.delete('mode');
+      return url.toString();
+    } catch {
+      return `${window.location.origin}${window.location.pathname}?biz=${targetId}`;
+    }
   }
 
   static importBusinessBackupFile(jsonContent: string): TenantBusiness {
@@ -1431,23 +1529,56 @@ export class StorageService {
   }
 
   // --- Developer Mock Data & Wiping Operations ---
-  static loadMockDemoData(type: 'restaurant' | 'retail' = 'restaurant'): void {
+  static loadMockDemoData(
+    typeOrProfile: BusinessType | BusinessSpecialtyProfile = 'restaurant'
+  ): void {
     const activeBizId = this.getActiveBusinessId();
     const currentSettings = this.getSettings();
+
+    const specialty: BusinessSpecialtyProfile =
+      typeOrProfile === 'retail' ? 'supermarket' : typeOrProfile;
+    const resolvedType: BusinessType =
+      specialty === 'restaurant' ? 'restaurant' : 'retail';
+
+    const nameMap: Record<BusinessSpecialtyProfile, string> = {
+      restaurant: 'مطعم ومشويات الشرق الأصيل',
+      supermarket: 'سوبر ماركت وميني ماركت البركة',
+      pet_store: 'بيتي زوو لمستلزمات وعيادة الحيوانات الأليفة',
+      apparel: 'أتيليه ومودا ستور للملابس والأحذية',
+      pharmacy: 'صيدليات الشفاء ومستحضرات التجميل',
+      electronics: 'تك زون للموبايلات والإلكترونيات والأجهزة الذكية',
+      service_center: 'المركز الهندسي لصيانة الموبايلات واللابتوب والأجهزة',
+      beauty_clinic: 'رويال جلو بيوتي سنتر وعيادات الليزر والعناية',
+      laundry: 'سبيد كلين للمغسلة والدراي كلين الفندقي',
+      general_retail: 'متجر التجزئة الحديثة',
+    };
+
+    const footerMap: Record<BusinessSpecialtyProfile, string> = {
+      restaurant: 'جميع الأسعار شاملة الضريبة · نتمنى لكم وجبة شهية',
+      supermarket: 'شكراً لتسوقكم معنا · خدمة التوصيل للمنازل متاحة طوال اليوم',
+      pet_store: 'نرعى أليفك بحب · مواعيد الشاور والتطعيمات مسجلة بملف الأليف',
+      apparel: 'الاستبدال وتغيير المقاس متاح خلال 14 يوماً بالفاتورة الأصلية',
+      pharmacy: 'مع تمنياتنا بالشفاء العاجل · يرجى الالتزام بالجرعة الإرشادية',
+      electronics: 'الفاتورة تعتبر شهادة ضمان معتمدة بالسيريال (IMEI) الموضح قرين كل جهاز',
+      service_center: 'ضمان 30 يوماً على قطع الغيار المستبدلة · المركز غير مسؤول عن الأجهزة بعد 60 يوماً',
+      beauty_clinic: 'نشكر زيارتكم · يرجى تأكيد أو تعديل الحجز قبل الموعد بـ 24 ساعة',
+      laundry: 'يرجى مراجعة الملابس عند الاستلام · التسليم بموجب رقم التاج وإيصال الاستلام',
+      general_retail: 'شكراً لزيارتكم · الفاتورة مطلوبة للاستبدال',
+    };
 
     const mockSettings: RestaurantSettings = {
       ...DEFAULT_SETTINGS,
       businessId: activeBizId,
-      restaurantName:
-        type === 'retail' ? 'سوبر ماركت وميني ماركت البركة' : 'مطعم ومشويات الشرق الأصيل',
+      restaurantName: nameMap[specialty],
       branchName: currentSettings.branchName || 'الفرع الرئيسي',
-      businessType: type,
+      businessType: resolvedType,
+      specialtyProfile: specialty,
       isOnboarded: true,
       currency: currentSettings.currency || 'ج.م',
       phone: currentSettings.phone || '01001234567',
       address: currentSettings.address || 'شارع عباس العقاد، مدينة نصر، القاهرة',
       taxNumber: '412-889-105',
-      footerNote: 'جميع الأسعار شاملة الضريبة · نتمنى لكم وجبة شهية',
+      footerNote: footerMap[specialty],
       adminPin: currentSettings.adminPin || '1234',
       defaultPrintFormat: 'thermal',
       enforceBlindCloseForCashier: true,
@@ -1456,7 +1587,810 @@ export class StorageService {
 
     this.saveSettings(mockSettings);
     this.saveCategories(DEFAULT_CATEGORIES);
-    this.saveInventory(DEFAULT_INVENTORY);
+
+    // Specialized Inventory Datasets per Vertical
+    if (specialty === 'supermarket') {
+      const superInv: InventoryItem[] = [
+        {
+          id: 'sup-inv-1',
+          code: 'BAR-101',
+          barcode: '6221001',
+          scalePluCode: '00101',
+          name: 'جبنة رومي بطارخ قديمة (ميزان)',
+          category: 'أجبان وألبان (ميزان)',
+          unit: 'كجم',
+          currentStock: 25,
+          minStockAlert: 4,
+          unitCost: 21000,
+          salePrice: 28000,
+          isWeightedScaleItem: true,
+          expiryDate: '2027-03-15',
+          batchNumber: 'BATCH-RM-01',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'sup-inv-2',
+          code: 'BAR-102',
+          barcode: '6221002',
+          scalePluCode: '00102',
+          name: 'لانشون حلواني بقري سادة (ميزان)',
+          category: 'أجبان وألبان (ميزان)',
+          unit: 'كجم',
+          currentStock: 18,
+          minStockAlert: 3,
+          unitCost: 16000,
+          salePrice: 22000,
+          isWeightedScaleItem: true,
+          expiryDate: '2026-12-20',
+          batchNumber: 'BATCH-LN-04',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'sup-inv-3',
+          code: 'BAR-103',
+          barcode: '6221003',
+          name: 'حليب جهينة كامل الدسم 1 لتر',
+          category: 'ألبان ومشروبات',
+          unit: 'علبة',
+          currentStock: 120,
+          minStockAlert: 24,
+          unitCost: 3800,
+          salePrice: 4500,
+          packUnitName: 'كرتونة (12 علبة)',
+          packConversionFactor: 12,
+          packSalePrice: 51000,
+          expiryDate: '2027-01-10',
+          batchNumber: 'JH-992',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'sup-inv-4',
+          code: 'BAR-104',
+          barcode: '6221004',
+          name: 'أرز الضحى مصري فاخر 1 كجم',
+          category: 'بقالة جافة',
+          unit: 'كيس',
+          currentStock: 80,
+          minStockAlert: 15,
+          unitCost: 3100,
+          salePrice: 3800,
+          packUnitName: 'باكيت (10 أكياس)',
+          packConversionFactor: 10,
+          packSalePrice: 36000,
+          expiryDate: '2027-09-01',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'sup-inv-5',
+          code: 'BAR-105',
+          barcode: '6221005',
+          name: 'زيت عباد الشمس كريستال 1.6 لتر',
+          category: 'زيوت وسمن',
+          unit: 'زجاجة',
+          currentStock: 45,
+          minStockAlert: 10,
+          unitCost: 13500,
+          salePrice: 16000,
+          packUnitName: 'كرتونة (6 زجاجات)',
+          packConversionFactor: 6,
+          packSalePrice: 93000,
+          expiryDate: '2027-08-15',
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(superInv);
+      this.savePetProfiles([]);
+    } else if (specialty === 'pet_store') {
+      const petInv: InventoryItem[] = [
+        {
+          id: 'pet-inv-1',
+          code: 'PET-101',
+          barcode: '890101',
+          scalePluCode: '00201',
+          name: 'دراي فود رويال كانين للقطط البالغة (فرط / بالكيلو)',
+          category: 'أغذية قطط (دراي فود)',
+          unit: 'كجم',
+          currentStock: 40,
+          minStockAlert: 8,
+          unitCost: 26000,
+          salePrice: 34000,
+          isWeightedScaleItem: true,
+          packUnitName: 'شكارة كاملة (10 كجم)',
+          packConversionFactor: 10,
+          packSalePrice: 320000,
+          petSpecies: 'cat',
+          expiryDate: '2027-06-30',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'pet-inv-2',
+          code: 'PET-102',
+          barcode: '890102',
+          scalePluCode: '00202',
+          name: 'دراي فود ميرا للكلاب البالغة (فرط / بالكيلو)',
+          category: 'أغذية كلاب (دراي فود)',
+          unit: 'كجم',
+          currentStock: 60,
+          minStockAlert: 10,
+          unitCost: 14000,
+          salePrice: 19000,
+          isWeightedScaleItem: true,
+          packUnitName: 'شكارة كاملة (20 كجم)',
+          packConversionFactor: 20,
+          packSalePrice: 350000,
+          petSpecies: 'dog',
+          expiryDate: '2027-05-20',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'pet-inv-3',
+          code: 'PET-103',
+          barcode: '890103',
+          name: 'رمل قطط كربوني متكتل خالي من الغبار 10 لتر',
+          category: 'مستلزمات ورمل نظافة',
+          unit: 'شكارة',
+          currentStock: 35,
+          minStockAlert: 6,
+          unitCost: 12000,
+          salePrice: 17500,
+          petSpecies: 'cat',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'pet-inv-4',
+          code: 'PET-SRV-1',
+          barcode: '890901',
+          name: 'خدمة شاور طبي وحلاقة كاملة وقص أظافر (Grooming)',
+          category: 'خدمات العناية والشاور',
+          unit: 'جلسة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 4000,
+          salePrice: 25000,
+          isServiceItem: true,
+          petSpecies: 'all',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'pet-inv-5',
+          code: 'PET-SRV-2',
+          barcode: '890902',
+          name: 'إقامة فندقية يومية شاملة الوجبات والرعاية (Pet Boarding)',
+          category: 'خدمات الفندقة والرعاية',
+          unit: 'ليلة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 7000,
+          salePrice: 30000,
+          isServiceItem: true,
+          petSpecies: 'all',
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(petInv);
+      this.savePetProfiles([
+        {
+          id: 'pet-prof-1',
+          code: 'PET-C01',
+          customerName: 'سارة أحمد',
+          customerPhone: '01098765432',
+          petName: 'بندق (Bondok)',
+          species: 'قط',
+          breed: 'شيرازي هيمالايا',
+          ageLabel: 'سنة و 4 شهور',
+          weightKg: 4.2,
+          lastVaccineDate: '2026-08-15',
+          nextVaccineDate: '2026-11-15',
+          nextGroomingDate: '2026-11-05',
+          medicalAndDietNotes: 'يفضل دراي فود رويال كانين، حساسية من الأسماك',
+        },
+        {
+          id: 'pet-prof-2',
+          code: 'PET-C02',
+          customerName: 'م. كريم عادل',
+          customerPhone: '01122334455',
+          petName: 'ماكس (Max)',
+          species: 'كلب',
+          breed: 'جولدن ريتريفر',
+          ageLabel: 'سنتان',
+          weightKg: 28.5,
+          lastVaccineDate: '2026-06-01',
+          nextVaccineDate: '2026-12-01',
+          nextGroomingDate: '2026-11-10',
+          medicalAndDietNotes: 'شاور طبي كل أسبوعين + أمبول حشرات شهري',
+        },
+      ]);
+    } else if (specialty === 'apparel') {
+      const apparelInv: InventoryItem[] = [
+        {
+          id: 'app-inv-1',
+          code: 'MOD-101',
+          barcode: '770101',
+          name: 'قميص كاجوال قطن مصري سليم فيت',
+          category: 'قمصان رجالي',
+          unit: 'قطعة',
+          currentStock: 24,
+          minStockAlert: 5,
+          unitCost: 35000,
+          salePrice: 65000,
+          season: 'all_season',
+          variants: [
+            { id: 'v1', size: 'M', color: 'أبيض', stock: 5, barcode: '770101-M-W' },
+            { id: 'v2', size: 'L', color: 'أبيض', stock: 6, barcode: '770101-L-W' },
+            { id: 'v3', size: 'L', color: 'كحلي', stock: 7, barcode: '770101-L-N' },
+            { id: 'v4', size: 'XL', color: 'أسود', stock: 4, barcode: '770101-XL-B' },
+            { id: 'v5', size: 'XXL', color: 'كحلي', stock: 2, barcode: '770101-XXL-N' },
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'app-inv-2',
+          code: 'MOD-102',
+          barcode: '770102',
+          name: 'بنطلون جينز ليكرا تركي كلاسيك',
+          category: 'بناطيل وجينز',
+          unit: 'قطعة',
+          currentStock: 18,
+          minStockAlert: 4,
+          unitCost: 42000,
+          salePrice: 79000,
+          season: 'all_season',
+          variants: [
+            { id: 'v6', size: '32', color: 'أزرق غامق', stock: 5, barcode: '770102-32-DB' },
+            { id: 'v7', size: '34', color: 'أزرق غامق', stock: 6, barcode: '770102-34-DB' },
+            { id: 'v8', size: '36', color: 'أسود فحمي', stock: 4, barcode: '770102-36-BK' },
+            { id: 'v9', size: '38', color: 'ثلجي', stock: 3, barcode: '770102-38-IC' },
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'app-inv-3',
+          code: 'MOD-103',
+          barcode: '770103',
+          name: 'جاكيت شتوي وتر بروف مبطن فرو',
+          category: 'جواكيت شتوي',
+          unit: 'قطعة',
+          currentStock: 12,
+          minStockAlert: 3,
+          unitCost: 75000,
+          salePrice: 135000,
+          season: 'winter',
+          variants: [
+            { id: 'v10', size: 'L', color: 'أسود', stock: 4, barcode: '770103-L-B' },
+            { id: 'v11', size: 'XL', color: 'زيتي', stock: 5, barcode: '770103-XL-O' },
+            { id: 'v12', size: 'XXL', color: 'أسود', stock: 3, barcode: '770103-XXL-B' },
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'app-inv-4',
+          code: 'MOD-104',
+          barcode: '770104',
+          name: 'سنيكرز جلدي طبي مريح للمشي',
+          category: 'أحذية رياضية وكاجوال',
+          unit: 'زوج',
+          currentStock: 15,
+          minStockAlert: 3,
+          unitCost: 50000,
+          salePrice: 95000,
+          season: 'all_season',
+          variants: [
+            { id: 'v13', size: '41', color: 'أبيض', stock: 3 },
+            { id: 'v14', size: '42', color: 'أبيض', stock: 5 },
+            { id: 'v15', size: '43', color: 'أسود', stock: 4 },
+            { id: 'v16', size: '44', color: 'كحلي', stock: 3 },
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(apparelInv);
+      this.savePetProfiles([]);
+    } else if (specialty === 'pharmacy') {
+      const pharmInv: InventoryItem[] = [
+        {
+          id: 'phm-inv-1',
+          code: 'MED-101',
+          barcode: '6223001',
+          name: 'بانادول إكسترا (Panadol Extra) — 24 قرص',
+          category: 'مسكنات وخافض حرارة',
+          unit: 'علبة',
+          currentStock: 45,
+          minStockAlert: 10,
+          unitCost: 4200,
+          salePrice: 5400,
+          subUnitName: 'شريط',
+          subUnitsPerPack: 2,
+          activeIngredient: 'Paracetamol 500mg + Caffeine',
+          dosageInstruction: 'قرص إلى قرصين كل 6 ساعات بعد الأكل',
+          expiryDate: '2027-08-01',
+          batchNumber: 'BN-8821',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'phm-inv-2',
+          code: 'MED-102',
+          barcode: '6223002',
+          name: 'أبيمول إكسترا (Abimol Extra) — 20 قرص (بديل مثيل)',
+          category: 'مسكنات وخافض حرارة',
+          unit: 'علبة',
+          currentStock: 30,
+          minStockAlert: 8,
+          unitCost: 2400,
+          salePrice: 3200,
+          subUnitName: 'شريط',
+          subUnitsPerPack: 2,
+          activeIngredient: 'Paracetamol 500mg + Caffeine',
+          dosageInstruction: 'قرص كل 6 ساعات عند اللزوم',
+          expiryDate: '2027-05-15',
+          batchNumber: 'AB-4410',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'phm-inv-3',
+          code: 'MED-103',
+          barcode: '6223003',
+          name: 'أوجمنتين 1 جرام (Augmentin 1g) — 14 قرص',
+          category: 'مضادات حيوية',
+          unit: 'علبة',
+          currentStock: 22,
+          minStockAlert: 5,
+          unitCost: 11500,
+          salePrice: 14000,
+          subUnitName: 'شريط',
+          subUnitsPerPack: 2,
+          activeIngredient: 'Amoxicillin 875mg + Clavulanic Acid 125mg',
+          dosageInstruction: 'قرص كل 12 ساعة لمدة 7 أيام بانتظام',
+          expiryDate: '2027-04-10',
+          batchNumber: 'AUG-902',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'phm-inv-4',
+          code: 'MED-104',
+          barcode: '6223004',
+          name: 'هاي بيوتك 1 جرام (Hibiotic 1g) — 16 قرص (بديل مثيل)',
+          category: 'مضادات حيوية',
+          unit: 'علبة',
+          currentStock: 28,
+          minStockAlert: 6,
+          unitCost: 8500,
+          salePrice: 10800,
+          subUnitName: 'شريط',
+          subUnitsPerPack: 2,
+          activeIngredient: 'Amoxicillin 875mg + Clavulanic Acid 125mg',
+          dosageInstruction: 'قرص كل 12 ساعة بعد الأكل',
+          expiryDate: '2027-07-20',
+          batchNumber: 'HB-312',
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'phm-inv-5',
+          code: 'MED-105',
+          barcode: '6223005',
+          name: 'فيتامين سي فوار 1000 مجم (C-Retard) — 30 كبسولة',
+          category: 'فيتامينات ومكملات',
+          unit: 'علبة',
+          currentStock: 35,
+          minStockAlert: 8,
+          unitCost: 5800,
+          salePrice: 7500,
+          subUnitName: 'شريط',
+          subUnitsPerPack: 3,
+          activeIngredient: 'Ascorbic Acid 1000mg',
+          dosageInstruction: 'كبسولة واحدة يومياً بعد الإفطار',
+          expiryDate: '2027-11-30',
+          batchNumber: 'VIT-109',
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(pharmInv);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([]);
+    } else if (specialty === 'electronics') {
+      const elecInv: InventoryItem[] = [
+        {
+          id: 'elc-inv-1',
+          code: 'MOB-101',
+          barcode: '35988101',
+          name: 'هاتف سامسونج جالاكسي Samsung Galaxy A55 5G (256GB / 8GB)',
+          category: 'هواتف ذكية (موبايلات)',
+          unit: 'جهاز',
+          currentStock: 4,
+          minStockAlert: 1,
+          unitCost: 1750000, // 17,500 EGP
+          salePrice: 1980000, // 19,800 EGP
+          warrantyMonths: 12,
+          serialNumbers: [
+            'IMEI-359881010011223',
+            'IMEI-359881010011224',
+            'IMEI-359881010011225',
+            'IMEI-359881010011226',
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'elc-inv-2',
+          code: 'MOB-102',
+          barcode: '35449202',
+          name: 'آيفون Apple iPhone 15 Pro (256GB - Natural Titanium)',
+          category: 'هواتف ذكية (موبايلات)',
+          unit: 'جهاز',
+          currentStock: 3,
+          minStockAlert: 1,
+          unitCost: 5200000, // 52,000 EGP
+          salePrice: 5650000, // 56,500 EGP
+          warrantyMonths: 12,
+          serialNumbers: [
+            'IMEI-354492029900111',
+            'IMEI-354492029900112',
+            'IMEI-354492029900113',
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'elc-inv-3',
+          code: 'ACC-201',
+          barcode: '6229001',
+          name: 'سماعة أبل إيربودز AirPods Pro 2 (USB-C)',
+          category: 'سماعات وساعات ذكية',
+          unit: 'قطعة',
+          currentStock: 5,
+          minStockAlert: 2,
+          unitCost: 920000,
+          salePrice: 1120000,
+          warrantyMonths: 12,
+          serialNumbers: [
+            'SN-AP2-88101',
+            'SN-AP2-88102',
+            'SN-AP2-88103',
+            'SN-AP2-88104',
+            'SN-AP2-88105',
+          ],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'elc-inv-4',
+          code: 'ACC-202',
+          barcode: '6229002',
+          name: 'شاحن أنكر أصلي فائق السرعة 45 وات (Anker 45W Super Fast)',
+          category: 'شواحن وإكسسوارات',
+          unit: 'قطعة',
+          currentStock: 25,
+          minStockAlert: 5,
+          unitCost: 65000,
+          salePrice: 95000,
+          warrantyMonths: 18,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'elc-inv-5',
+          code: 'ACC-203',
+          barcode: '6229003',
+          name: 'اسكرينة حماية سيراميك نانو + جراب ماج سيف شفاف',
+          category: 'شواحن وإكسسوارات',
+          unit: 'طقم',
+          currentStock: 50,
+          minStockAlert: 10,
+          unitCost: 12000,
+          salePrice: 35000,
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(elecInv);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([]);
+    } else if (specialty === 'service_center') {
+      const srvInv: InventoryItem[] = [
+        {
+          id: 'srv-inv-1',
+          code: 'PRT-101',
+          barcode: '7100101',
+          name: 'شاشة أصلية بالتاتش Samsung A54 / A55 Super AMOLED',
+          category: 'قطع غيار شاشات وبطاريات',
+          unit: 'قطعة',
+          currentStock: 12,
+          minStockAlert: 3,
+          unitCost: 220000,
+          salePrice: 320000,
+          warrantyMonths: 3,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'srv-inv-2',
+          code: 'PRT-102',
+          barcode: '7100102',
+          name: 'بطارية أصلية iPhone 13 / 14 Pro سعة 100% بالضمان',
+          category: 'قطع غيار شاشات وبطاريات',
+          unit: 'قطعة',
+          currentStock: 18,
+          minStockAlert: 4,
+          unitCost: 95000,
+          salePrice: 165000,
+          warrantyMonths: 6,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'srv-inv-3',
+          code: 'PRT-103',
+          barcode: '7100103',
+          name: 'هارد ديسك SSD NVMe M.2 Kingston 512GB لتسريع اللابتوب',
+          category: 'قطع غيار لابتوب وكمبيوتر',
+          unit: 'قطعة',
+          currentStock: 10,
+          minStockAlert: 2,
+          unitCost: 145000,
+          salePrice: 195000,
+          warrantyMonths: 12,
+          serialNumbers: ['SN-SSD-512-01', 'SN-SSD-512-02', 'SN-SSD-512-03'],
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'srv-inv-4',
+          code: 'SRV-LAB-1',
+          barcode: '7100901',
+          name: 'مصنعية صيانة هاردوير دقيقة وتغيير شاشة / سوكت شحن',
+          category: 'خدمات ومصنعيات الصيانة',
+          unit: 'خدمة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 5000,
+          salePrice: 45000,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'srv-inv-5',
+          code: 'SRV-LAB-2',
+          barcode: '7100902',
+          name: 'خدمة سوفت وير كامل، فك شفرة، ونقل بيانات مع التنظيف الحراري',
+          category: 'خدمات ومصنعيات الصيانة',
+          unit: 'خدمة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 2000,
+          salePrice: 30000,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(srvInv);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([
+        {
+          id: 'tkt-rep-1',
+          ticketNumber: 'SRV-1001',
+          ticketType: 'repair',
+          customerName: 'م. طارق عبد الرحمن',
+          customerPhone: '01012349876',
+          itemOrServiceTitle: 'Samsung Galaxy A54 5G — تغيير شاشة أصلية',
+          serialOrTagNumber: 'IMEI-358901044512',
+          problemOrNotes: 'كسر بالشاشة الأمامية مع توقف التاتش بالكامل + فحص سوكت الشحن',
+          assignedEmployeeId: 'emp-1',
+          assignedEmployeeName: 'م. حسن الشافعي (فني أول)',
+          appointmentDate: getTodayDateString(),
+          appointmentTime: '18:00',
+          status: 'ready',
+          serviceFeeMinor: 45000, // 450 EGP labor
+          partsUsed: [
+            {
+              inventoryItemId: 'srv-inv-1',
+              itemName: 'شاشة أصلية بالتاتش Samsung A54 / A55 Super AMOLED',
+              qty: 1,
+              unitPriceMinor: 320000,
+              unitCostMinor: 220000,
+            },
+          ],
+          depositPaidMinor: 50000, // 500 EGP deposit
+          totalAmountMinor: 365000, // 3,650 EGP total
+          isSettled: false,
+          createdAt: getTodayDateString(),
+        },
+        {
+          id: 'tkt-rep-2',
+          ticketNumber: 'SRV-1002',
+          ticketType: 'repair',
+          customerName: 'أ. محمود الجندي',
+          customerPhone: '01144556677',
+          itemOrServiceTitle: 'لابتوب Dell Inspiron 15 — تركيب هارد SSD 512GB وويندوز',
+          serialOrTagNumber: 'TAG-DELL-8841',
+          problemOrNotes: 'بطء شديد في الإقلاع وتنظيف مروحة البروسيسور ومعجون حراري',
+          assignedEmployeeId: 'emp-2',
+          assignedEmployeeName: 'م. عمر عبد العزيز',
+          appointmentDate: getTodayDateString(),
+          appointmentTime: '20:30',
+          status: 'in_progress',
+          serviceFeeMinor: 30000,
+          partsUsed: [
+            {
+              inventoryItemId: 'srv-inv-3',
+              itemName: 'هارد ديسك SSD NVMe M.2 Kingston 512GB لتسريع اللابتوب',
+              qty: 1,
+              unitPriceMinor: 195000,
+              unitCostMinor: 145000,
+            },
+          ],
+          depositPaidMinor: 0,
+          totalAmountMinor: 225000,
+          isSettled: false,
+          createdAt: getTodayDateString(),
+        },
+      ]);
+    } else if (specialty === 'beauty_clinic') {
+      const beautyInv: InventoryItem[] = [
+        {
+          id: 'bty-inv-1',
+          code: 'BTY-SRV-1',
+          barcode: '900101',
+          name: 'جلسة تنظيف بشرة عميق هيدرافيشل ملكي (HydraFacial Glow)',
+          category: 'جلسات العناية بالبشرة والليزر',
+          unit: 'جلسة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 15000,
+          salePrice: 65000,
+          isServiceItem: true,
+          serviceDurationMinutes: 60,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'bty-inv-2',
+          code: 'BTY-SRV-2',
+          barcode: '900102',
+          name: 'باقة 6 جلسات ليزر فول بودي شاملة الرتوش (Prepaid Package)',
+          category: 'باقات واشتراكات الجلسات',
+          unit: 'باقة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 90000,
+          salePrice: 360000,
+          isServiceItem: true,
+          serviceDurationMinutes: 90,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'bty-inv-3',
+          code: 'BTY-SRV-3',
+          barcode: '900103',
+          name: 'جلسة بروتين وفيلر علاجي للشعر التالف بالبخار الأوزوني',
+          category: 'علاجات الشعر والصبغات',
+          unit: 'جلسة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 40000,
+          salePrice: 140000,
+          isServiceItem: true,
+          serviceDurationMinutes: 120,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'bty-inv-4',
+          code: 'BTY-PRD-1',
+          barcode: '900201',
+          name: 'سيروم هيالورونيك أسيد وفيتامين C طبي أصلي 50 مل',
+          category: 'منتجات عناية منزلية للبيع',
+          unit: 'عبوة',
+          currentStock: 30,
+          minStockAlert: 5,
+          unitCost: 28000,
+          salePrice: 48000,
+          expiryDate: '2027-10-01',
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(beautyInv);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([
+        {
+          id: 'tkt-bty-1',
+          ticketNumber: 'BKG-2001',
+          ticketType: 'appointment',
+          customerName: 'د. نهى المنشاوي',
+          customerPhone: '01066778899',
+          itemOrServiceTitle: 'جلسة تنظيف بشرة عميق هيدرافيشل ملكي (HydraFacial Glow)',
+          serialOrTagNumber: 'غرفة الليزر والبشرة #2',
+          problemOrNotes: 'بشرة حساسة — استخدام سيروم التهدئة بعد الجلسة',
+          assignedEmployeeId: 'emp-1',
+          assignedEmployeeName: 'أخصائية التجميل: مريم فؤاد',
+          appointmentDate: getTodayDateString(),
+          appointmentTime: '17:00',
+          status: 'ready',
+          serviceFeeMinor: 65000,
+          depositPaidMinor: 15000,
+          totalAmountMinor: 65000,
+          packageRemainingSessions: 4,
+          isSettled: false,
+          createdAt: getTodayDateString(),
+        },
+      ]);
+    } else if (specialty === 'laundry') {
+      const laundryInv: InventoryItem[] = [
+        {
+          id: 'lnd-inv-1',
+          code: 'LND-101',
+          barcode: '800101',
+          name: 'غسيل وكي بدلة رجالي كاملة بالتغليف الفندقي (Dry Clean)',
+          category: 'دراي كلين وملابس رسمية',
+          unit: 'بدلة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 3500,
+          salePrice: 14000,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'lnd-inv-2',
+          code: 'LND-102',
+          barcode: '800102',
+          name: 'غسيل وكي قميص / بلوزة / بنطلون بالبخار',
+          category: 'غسيل وكي يومي',
+          unit: 'قطعة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 1000,
+          salePrice: 4500,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'lnd-inv-3',
+          code: 'LND-103',
+          barcode: '800103',
+          name: 'غسيل وتعقيم بطانية أو لحاف فايبر كبير',
+          category: 'مفروشات وبطاطين وسجاد',
+          unit: 'قطعة',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 4500,
+          salePrice: 18000,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+        {
+          id: 'lnd-inv-4',
+          code: 'LND-104',
+          barcode: '800104',
+          name: 'تنظيف فستان سهرة / زفاف خاص بالبخار الجاف',
+          category: 'دراي كلين وملابس رسمية',
+          unit: 'فستان',
+          currentStock: 999,
+          minStockAlert: 0,
+          unitCost: 9000,
+          salePrice: 35000,
+          isServiceItem: true,
+          lastUpdated: getTodayDateString(),
+        },
+      ];
+      this.saveInventory(laundryInv);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([
+        {
+          id: 'tkt-lnd-1',
+          ticketNumber: 'LND-3001',
+          ticketType: 'laundry',
+          customerName: 'أ. خالد الشربيني',
+          customerPhone: '01288990011',
+          itemOrServiceTitle: '2 بدلة رجالي + 3 قميص أبيض — دراي كلين وكي مستعجل',
+          serialOrTagNumber: 'TAG-409 (شماعة رقم 14)',
+          problemOrNotes: 'إزالة بقعة قهوة من القميص الأزرق + تعليق على شماعات منفصلة',
+          assignedEmployeeId: 'emp-1',
+          assignedEmployeeName: 'قسم البخار والدراي كلين',
+          appointmentDate: getTodayDateString(),
+          appointmentTime: '19:30',
+          status: 'ready',
+          serviceFeeMinor: 41500, // 415 EGP
+          depositPaidMinor: 10000, // 100 EGP advance
+          totalAmountMinor: 41500,
+          isSettled: false,
+          createdAt: getTodayDateString(),
+        },
+      ]);
+    } else {
+      this.saveInventory(DEFAULT_INVENTORY);
+      this.savePetProfiles([]);
+      this.saveServiceTickets([]);
+    }
+
     this.saveMenuItems(DEFAULT_MENU_ITEMS);
     this.saveSuppliers(DEFAULT_SUPPLIERS);
     this.saveCustomers(DEFAULT_CUSTOMERS);
@@ -1480,6 +2414,7 @@ export class StorageService {
             name: mockSettings.restaurantName,
             branchName: mockSettings.branchName,
             businessType: mockSettings.businessType,
+            specialtyProfile: mockSettings.specialtyProfile,
           }
         : b
     );
@@ -2300,6 +3235,11 @@ export class StorageService {
       qty: number;
       notes?: string;
       kitchenStationId?: string;
+      unitPriceOverride?: number;
+      unitCostOverride?: number;
+      variantId?: string;
+      stockDeductMultiplier?: number;
+      serialNumber?: string;
     }[];
     discountMinor: number;
     couponCode?: string;
@@ -2349,17 +3289,23 @@ export class StorageService {
         if (!invItem) {
           throw new Error('صنف غير موجود في المخزون');
         }
-        const unitPrice = invItem.salePrice || invItem.unitCost;
-        const unitTheoreticalCost = invItem.unitCost;
+        const unitPrice =
+          lineReq.unitPriceOverride !== undefined
+            ? lineReq.unitPriceOverride
+            : invItem.salePrice || invItem.unitCost;
+        const unitTheoreticalCost =
+          lineReq.unitCostOverride !== undefined
+            ? lineReq.unitCostOverride
+            : invItem.unitCost;
         return {
           menuItemId: invItem.id,
           code: invItem.code,
           menuItemName: invItem.name,
-          qty: lineReq.qty,
+          qty: Number(lineReq.qty.toFixed(3)),
           unitPrice,
           unitTheoreticalCost,
-          totalPrice: unitPrice * lineReq.qty,
-          totalTheoreticalCost: unitTheoreticalCost * lineReq.qty,
+          totalPrice: Math.round(unitPrice * lineReq.qty),
+          totalTheoreticalCost: Math.round(unitTheoreticalCost * lineReq.qty),
           notes: lineReq.notes?.trim() || undefined,
         };
       } else {
@@ -2376,8 +3322,8 @@ export class StorageService {
           qty: lineReq.qty,
           unitPrice: dish.sellingPrice,
           unitTheoreticalCost: dish.theoreticalCost,
-          totalPrice: dish.sellingPrice * lineReq.qty,
-          totalTheoreticalCost: dish.theoreticalCost * lineReq.qty,
+          totalPrice: Math.round(dish.sellingPrice * lineReq.qty),
+          totalTheoreticalCost: Math.round(dish.theoreticalCost * lineReq.qty),
           kitchenStationId: station?.id,
           kitchenStationName: station?.name,
           notes: lineReq.notes?.trim() || undefined,
@@ -2411,16 +3357,33 @@ export class StorageService {
 
     // Deduct stock from inventory
     const updatedInventory = [...inventory];
-    for (const line of builtLines) {
+    params.lines.forEach((lineReq, lineIdx) => {
+      const line = builtLines[lineIdx];
       if (isRetail) {
         const idx = updatedInventory.findIndex((i) => i.id === line.menuItemId);
-        if (idx !== -1) {
+        if (idx !== -1 && !updatedInventory[idx].isServiceItem) {
+          const multiplier = lineReq.stockDeductMultiplier ?? 1;
+          const deductUnits = Number((line.qty * multiplier).toFixed(3));
+          let nextVariants = updatedInventory[idx].variants;
+          if (lineReq.variantId && nextVariants) {
+            nextVariants = nextVariants.map((v) =>
+              v.id === lineReq.variantId
+                ? { ...v, stock: Math.max(0, v.stock - line.qty) }
+                : v
+            );
+          }
+          let nextSerials = updatedInventory[idx].serialNumbers;
+          if (lineReq.serialNumber && nextSerials && nextSerials.length > 0) {
+            nextSerials = nextSerials.filter((sn) => sn !== lineReq.serialNumber);
+          }
           updatedInventory[idx] = {
             ...updatedInventory[idx],
             currentStock: Math.max(
               0,
-              Number((updatedInventory[idx].currentStock - line.qty).toFixed(3))
+              Number((updatedInventory[idx].currentStock - deductUnits).toFixed(3))
             ),
+            variants: nextVariants,
+            serialNumbers: nextSerials,
             lastUpdated: getTodayDateString(),
           };
         }
@@ -2443,7 +3406,7 @@ export class StorageService {
           }
         }
       }
-    }
+    });
     this.saveInventory(updatedInventory);
 
     // Update customer debt if credit
@@ -3591,104 +4554,237 @@ export class StorageService {
       localStorage.removeItem('fastrest_production_locked_branch_id_v2');
       return;
     }
-    localStorage.setItem('fastrest_production_locked_branch_id_v2', branchId);
     const businesses = this.getBusinesses();
-    if (businesses.some((b) => b.id === branchId)) {
+    const existing = businesses.find((b) => b.id === branchId);
+    if (existing) {
+      localStorage.setItem('fastrest_production_locked_branch_id_v2', branchId);
       this.switchBusiness(branchId);
-    } else {
-      const currentBizId = this.getActiveBusinessId();
-      this.saveBusinessSnapshot(currentBizId);
+      return;
+    }
 
-      const newBiz: TenantBusiness = {
-        id: branchId,
-        name: 'منشأة جديدة',
-        branchName: 'الفرع الرئيسي',
-        businessType: 'restaurant',
-        currency: 'ج.م',
-        phone: '',
-        address: '',
-        createdAt: getTodayDateString(),
-        lastOpenedAt: new Date().toISOString(),
-      };
-
-      const updatedList = [newBiz, ...businesses];
-      localStorage.setItem(KEYS.BUSINESSES, JSON.stringify(updatedList));
-      localStorage.setItem(KEYS.ACTIVE_BUSINESS_ID, branchId);
-
-      const newSettings: RestaurantSettings = {
-        ...DEFAULT_SETTINGS,
-        businessId: branchId,
-        restaurantName: '',
-        branchName: 'الفرع الرئيسي',
-        businessType: 'restaurant',
-        currency: 'ج.م',
-        phone: '',
-        address: '',
-        isOnboarded: false,
-      };
-      this.saveSettings(newSettings);
-
-      const initialCategories: AccountCategory[] = [
-        { id: 'cat-exp-1', code: 'EXP-101', name: 'مشتريات خامات ومطبخ طازجة', type: 'expense', linkedPartyType: 'general' },
-        { id: 'cat-exp-2', code: 'EXP-102', name: 'أجور ومرتبات وسلف العاملين', type: 'expense', linkedPartyType: 'employee' },
-        { id: 'cat-exp-3', code: 'EXP-103', name: 'فواتير مرافق وكهرباء وتشغيل', type: 'expense', linkedPartyType: 'general' },
-        { id: 'cat-exp-4', code: 'EXP-104', name: 'سداد دفعات موردين آجل', type: 'expense', linkedPartyType: 'supplier' },
-        { id: 'cat-exp-5', code: 'EXP-105', name: 'مسحوبات جاري الشركاء والملاك', type: 'expense', linkedPartyType: 'partner' },
-        { id: 'cat-rec-1', code: 'REC-201', name: 'إيرادات مبيعات نقدية وخارجية', type: 'receipt', linkedPartyType: 'general' },
-        { id: 'cat-rec-2', code: 'REC-202', name: 'تحصيل مديونية عملاء آجل', type: 'receipt', linkedPartyType: 'customer' },
-        { id: 'cat-rec-3', code: 'REC-203', name: 'إيداع وتمويل جاري الشركاء', type: 'receipt', linkedPartyType: 'partner' },
-      ];
-      this.saveCategories(initialCategories);
-
-      const initialUsers: AppUser[] = [
-        {
-          id: `usr-cashier-${Date.now()}`,
-          code: 'USR-01',
-          name: 'كاشير الوردية',
-          role: 'cashier',
-          pin: '1111',
-          phone: '',
-          isActive: true,
-          maxExpenseLimitMinor: 20000,
-          notes: 'حساب الكاشير الافتراضي',
-        },
-        {
-          id: `usr-owner-${Date.now() + 1}`,
-          code: 'USR-02',
-          name: 'المالك / المدير العام',
-          role: 'partner',
-          pin: '1234',
-          phone: '',
-          isActive: true,
-          maxExpenseLimitMinor: 0,
-          notes: 'المالك المؤسس - صلاحيات كاملة',
-        },
-      ];
-      this.saveUsers(initialUsers);
-      this.setActiveUser(initialUsers[1].id);
-      this.savePartners([]);
-      this.saveInventory([]);
-      this.saveMenuItems([]);
-      this.saveSuppliers([]);
-      this.saveCustomers([]);
-      this.saveShifts([]);
-      this.saveVouchers([]);
-      this.saveSaleOrders([]);
-      this.savePromotions([]);
-      this.saveEmployees([]);
-      this.saveKitchenStations(DEFAULT_KITCHEN_STATIONS);
-      this.saveDeliveryDrivers([]);
-      localStorage.removeItem(KEYS.WASTE);
-      this.saveAuditLogs([]);
-      this.saveAttendanceLogs([]);
-      this.saveHRAdjustments([]);
-      this.savePayrollSettlements([]);
-      this.saveBusinessSnapshot(branchId);
+    // Check if snapshot exists in localStorage
+    const raw = localStorage.getItem(`fastrest_biz_bundle_${branchId}`);
+    if (raw) {
+      try {
+        const bundle: BusinessBackupBundle = JSON.parse(raw);
+        localStorage.setItem('fastrest_production_locked_branch_id_v2', branchId);
+        this.loadBusinessSnapshot(bundle);
+        return;
+      } catch {
+        // Fallback
+      }
     }
   }
 
   static isProductionBranchLocked(): boolean {
+    const active = this.getActiveUser();
+    if (active && active.role === 'partner') return false;
     return Boolean(this.getLockedBranchId());
   }
+
+  // --- Pet Profiles (Pet Shop & Veterinary / Grooming Vertical) ---
+  static getPetProfiles(): PetProfile[] {
+    try {
+      const raw = localStorage.getItem(KEYS.PET_PROFILES);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static savePetProfiles(list: PetProfile[]): void {
+    localStorage.setItem(KEYS.PET_PROFILES, JSON.stringify(list));
+  }
+
+  // --- Service Tickets / Bookings / Laundry Orders (Service & Electronics Verticals) ---
+  static getServiceTickets(): ServiceTicket[] {
+    try {
+      const raw = localStorage.getItem(KEYS.SERVICE_TICKETS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveServiceTickets(list: ServiceTicket[]): void {
+    localStorage.setItem(KEYS.SERVICE_TICKETS, JSON.stringify(list));
+  }
+
+  static updateServiceTicketStatus(
+    ticketId: string,
+    status: ServiceTicket['status'],
+    settledOrderId?: string
+  ): void {
+    const list = this.getServiceTickets();
+    const updated = list.map((t) =>
+      t.id === ticketId
+        ? {
+            ...t,
+            status,
+            isSettled: status === 'delivered' ? true : t.isSettled,
+            settledOrderId: settledOrderId || t.settledOrderId,
+          }
+        : t
+    );
+    this.saveServiceTickets(updated);
+  }
+
+  /**
+   * Parses an electronic scale barcode (Prefix 21 or 22, 13 digits: 21 + 5-digit PLU + 5-digit weight in grams + 1 check digit)
+   * e.g. "2100101007500" => PLU "00101", weightKg = 0.750
+   */
+  static parseElectronicScaleBarcode(barcode: string): {
+    isScaleBarcode: boolean;
+    pluCode?: string;
+    weightKg?: number;
+    matchedItem?: InventoryItem;
+  } {
+    const clean = barcode.trim();
+    if (
+      (clean.startsWith('21') || clean.startsWith('22')) &&
+      clean.length >= 12 &&
+      /^\d+$/.test(clean)
+    ) {
+      const pluCode = clean.slice(2, 7); // 5 digits
+      const gramsStr = clean.slice(7, 12); // 5 digits in grams
+      const grams = parseInt(gramsStr, 10);
+      const weightKg = Number((grams / 1000).toFixed(3));
+      const inv = this.getInventory();
+      const matchedItem = inv.find(
+        (i) =>
+          i.scalePluCode === pluCode ||
+          i.code.endsWith(pluCode) ||
+          i.barcode === pluCode
+      );
+      return {
+        isScaleBarcode: true,
+        pluCode,
+        weightKg: weightKg > 0 ? weightKg : 0.5,
+        matchedItem,
+      };
+    }
+    return { isScaleBarcode: false };
+  }
+
+  // --- Pet Store Auto Feeding Cycles & Recurring Reminders ---
+  static getPetFeedingCycles(): PetFeedingCycle[] {
+    try {
+      const raw = localStorage.getItem(KEYS.PET_FEEDING_CYCLES);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static savePetFeedingCycles(cycles: PetFeedingCycle[]): void {
+    localStorage.setItem(KEYS.PET_FEEDING_CYCLES, JSON.stringify(cycles));
+  }
+
+  // --- Delivery Fleet Settlements & Driver Custody Engine ---
+  static getDriverSettlements(): DriverSettlementRecord[] {
+    try {
+      const raw = localStorage.getItem(KEYS.DRIVER_SETTLEMENTS);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveDriverSettlements(list: DriverSettlementRecord[]): void {
+    localStorage.setItem(KEYS.DRIVER_SETTLEMENTS, JSON.stringify(list));
+  }
+
+  static settleDriverShift(params: {
+    driverId: string;
+    targetContainer?: FinancialContainerType;
+    customCommissionMinor?: number;
+    settledBy: string;
+    notes?: string;
+  }): DriverSettlementRecord {
+    const drivers = this.getDeliveryDrivers();
+    const driver = drivers.find((d) => d.id === params.driverId);
+    if (!driver) throw new Error('سائق التوصيل غير موجود');
+
+    const totalCollectedCash = driver.cashInCustodyMinor || 0;
+    const ordersDeliveredCount = driver.currentOrdersCount || 0;
+
+    // Calculate commission: check linked employee or custom or default per order
+    let commissionEarnedMinor = params.customCommissionMinor;
+    if (commissionEarnedMinor === undefined) {
+      const employees = this.getEmployees();
+      const linkedEmp = employees.find(
+        (e) => e.linkedDriverId === driver.id || e.id === driver.id
+      );
+      const perOrderComm = linkedEmp?.perDeliveryCommissionMinor || 1500; // 15 EGP default per delivery
+      commissionEarnedMinor = ordersDeliveredCount * perOrderComm;
+    }
+
+    const netTurnedOverToSafe = Math.max(
+      0,
+      totalCollectedCash - commissionEarnedMinor
+    );
+    const date = getTodayDateString();
+    const time = getCurrentTimeString();
+    const activeShift = this.getActiveShift();
+    const targetContainer = params.targetContainer || 'main_safe';
+
+    // Create a receipt voucher for turning over custody to the safe
+    const voucher = this.addVoucher({
+      shiftId: activeShift?.id || 'manual_settlement',
+      cashierName: activeShift?.cashierName || 'إدارة الدليفري',
+      type: 'receipt',
+      amount: netTurnedOverToSafe,
+      accountCode: 'REC-204',
+      accountName: 'توريد عهدة وتحصيلات طيار دليفري',
+      recipient: driver.name,
+      description: `تصفية وردية الطيار (${driver.name}) - عدد ${ordersDeliveredCount} طلبات - إجمالي محصل ${
+        totalCollectedCash / 100
+      } ج.م - عمولة ${commissionEarnedMinor / 100} ج.م - صافي مورد ${netTurnedOverToSafe / 100} ج.م${
+        params.notes ? ` - ملاحظات: ${params.notes}` : ''
+      }`,
+      financialContainer: targetContainer,
+      partyType: 'employee',
+      employeeId: driver.id,
+    });
+
+    // Reset driver custody
+    const updatedDrivers = drivers.map((d) =>
+      d.id === driver.id
+        ? {
+            ...d,
+            cashInCustodyMinor: 0,
+            currentOrdersCount: 0,
+            totalDeliveredCount:
+              (d.totalDeliveredCount || 0) + ordersDeliveredCount,
+          }
+        : d
+    );
+    this.saveDeliveryDrivers(updatedDrivers);
+
+    // Save settlement record
+    const settlements = this.getDriverSettlements();
+    const settlement: DriverSettlementRecord = {
+      id: `drv-set-${Date.now()}`,
+      settlementNumber: `DRV-SET-${String(settlements.length + 1).padStart(
+        4,
+        '0'
+      )}`,
+      driverId: driver.id,
+      driverName: driver.name,
+      date,
+      time,
+      ordersDeliveredCount,
+      totalCollectedCashMinor: totalCollectedCash,
+      commissionEarnedMinor,
+      netTurnedOverToSafeMinor: netTurnedOverToSafe,
+      voucherId: voucher.id,
+      settledBy: params.settledBy,
+    };
+
+    this.saveDriverSettlements([settlement, ...settlements]);
+    return settlement;
+  }
 }
+
+
 

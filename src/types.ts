@@ -1,5 +1,17 @@
 export type BusinessType = 'restaurant' | 'retail';
 
+export type BusinessSpecialtyProfile =
+  | 'restaurant'
+  | 'supermarket'
+  | 'pet_store'
+  | 'apparel'
+  | 'pharmacy'
+  | 'electronics'
+  | 'service_center'
+  | 'beauty_clinic'
+  | 'laundry'
+  | 'general_retail';
+
 export type UserRole = 'cashier' | 'accountant' | 'manager' | 'partner';
 
 export type PartyType = 'partner' | 'employee' | 'supplier' | 'customer' | 'general';
@@ -135,6 +147,7 @@ export interface RestaurantSettings {
   footerNote: string;
   logoBase64?: string;
   businessType: BusinessType;
+  specialtyProfile?: BusinessSpecialtyProfile;
   isOnboarded: boolean;
   adminPin?: string;
   defaultPrintFormat?: 'thermal' | 'standard';
@@ -148,6 +161,7 @@ export interface TenantBusiness {
   name: string;
   branchName: string;
   businessType: BusinessType;
+  specialtyProfile?: BusinessSpecialtyProfile;
   currency: string;
   phone?: string;
   address?: string;
@@ -179,6 +193,8 @@ export interface BusinessBackupBundle {
   attendanceLogs?: AttendanceRecord[];
   hrAdjustments?: HRAdjustment[];
   payrollSettlements?: PayrollSettlement[];
+  petProfiles?: PetProfile[];
+  serviceTickets?: ServiceTicket[];
 }
 
 export interface AccountCategory {
@@ -257,6 +273,31 @@ export interface ShiftCashCalculation {
   expectedCashInDrawer: number;
 }
 
+export interface ApparelVariant {
+  id: string;
+  size: string; // e.g. 'S', 'M', 'L', 'XL', 'XXL', '42', '44'
+  color: string; // e.g. 'أسود', 'أبيض', 'كحلي', 'بيج'
+  barcode?: string;
+  stock: number;
+  priceMinor?: number;
+}
+
+export interface PetProfile {
+  id: string;
+  code: string;
+  customerName: string;
+  customerPhone: string;
+  petName: string;
+  species: 'قط' | 'كلب' | 'طائر' | 'أخرى';
+  breed: string;
+  ageLabel: string;
+  weightKg: number;
+  lastVaccineDate?: string;
+  nextVaccineDate?: string;
+  nextGroomingDate?: string;
+  medicalAndDietNotes?: string;
+}
+
 export interface InventoryItem {
   id: string;
   code: string;
@@ -268,6 +309,59 @@ export interface InventoryItem {
   unitCost: number; // minor units
   salePrice?: number; // minor units (for retail mode)
   lastUpdated: string;
+
+  // Specialized Retail Vertical Fields
+  barcode?: string;
+  expiryDate?: string; // YYYY-MM-DD (Pharmacy, Supermarket, Pet Store)
+  batchNumber?: string; // رقم التشغيلة
+  activeIngredient?: string; // المادة الفعالة والتركيز (Pharmacy)
+  dosageInstruction?: string; // الجرعة الإرشادية (Pharmacy)
+  subUnitName?: string; // مثلاً 'شريط' في الصيدلية أو 'كجم فرط' في متجر الأليف
+  subUnitsPerPack?: number; // عدد الشرائط بالعلبة (مثلاً 3)
+  packUnitName?: string; // مثلاً 'كرتونة' أو 'شكارة'
+  packConversionFactor?: number; // مثلاً 24 قطعة في الكرتونة أو 20 كجم في الشكارة
+  packSalePrice?: number; // سعر بيع الكرتونة أو الشكارة كاملة (minor units)
+  isWeightedScaleItem?: boolean; // صنف ميزان إلكتروني وباركود 21
+  scalePluCode?: string; // كود الميزان من 5 أرقام مثل 00101
+  variants?: ApparelVariant[]; // مصفوفة المقاسات والألوان للملابس والأحذية
+  season?: 'summer' | 'winter' | 'all_season';
+  petSpecies?: 'cat' | 'dog' | 'bird' | 'all';
+  isServiceItem?: boolean; // خدمة شاور/حلاقة/فندقة/صيانة/جلسة تجميل/غسيل
+  serialNumbers?: string[]; // أرقام السيريال والـ IMEI المتاحة بالمخزن للإلكترونيات والموبايلات
+  warrantyMonths?: number; // فترة الضمان بالشهور (مثلاً 12 شهر)
+  serviceDurationMinutes?: number; // مدة الجلسة أو الخدمة بالدقائق
+}
+
+export interface ServiceTicketPart {
+  inventoryItemId: string;
+  itemName: string;
+  qty: number;
+  unitPriceMinor: number;
+  unitCostMinor: number;
+}
+
+export interface ServiceTicket {
+  id: string;
+  ticketNumber: string; // مثلاً SRV-1001 أو BKG-2001 أو LND-3001
+  ticketType: 'repair' | 'appointment' | 'laundry';
+  customerName: string;
+  customerPhone: string;
+  itemOrServiceTitle: string; // اسم الجهاز أو الجلسة أو القطع المستلمة
+  serialOrTagNumber?: string; // السيريال IMEI أو رقم تاج الملابس أو الغرفة/الكرسي
+  problemOrNotes?: string; // وصف العطل أو تفاصيل الخدمة أو الباقة
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string; // الفني أو الأخصائي المسؤول
+  appointmentDate?: string; // تاريخ الموعد أو التسليم المتوقع
+  appointmentTime?: string;
+  status: 'received' | 'in_progress' | 'ready' | 'delivered' | 'cancelled';
+  serviceFeeMinor: number; // مصنعية الصيانة أو سعر الجلسة أو الغسيل
+  partsUsed?: ServiceTicketPart[]; // قطع الغيار أو الخامات المسحوبة
+  depositPaidMinor: number; // العربون المدفوع مقدماً
+  totalAmountMinor: number; // الإجمالي الكلي (المصنعية + قطع الغيار)
+  packageRemainingSessions?: number; // رصيد جلسات الباقة المتبقي للبيوتي والعيادات
+  isSettled?: boolean;
+  settledOrderId?: string;
+  createdAt: string;
 }
 
 export interface WasteLog {
@@ -485,5 +579,79 @@ export interface PayrollSettlement {
   paidBy: string;
   notes?: string;
 }
+
+export type ExtendedFinancialContainerType =
+  | 'shift_drawer'
+  | 'main_safe'
+  | 'bank_account'
+  | 'ewallet_instapay'
+  | 'driver_custody'
+  | 'partner_equity';
+
+export interface BusinessInsight {
+  id: string;
+  type: 'bundle' | 'margin_leak' | 'cost_waste' | 'retention';
+  priority: 'high' | 'medium' | 'opportunity';
+  title: string;
+  description: string;
+  financialImpactMinor: number;
+  actionLabel?: string;
+  actionPayload?: {
+    suggestedPromo?: Partial<Promotion>;
+    suggestedPriceAdjustment?: {
+      itemId: string;
+      currentPriceMinor: number;
+      recommendedPriceMinor: number;
+    };
+    suggestedCustomerPhone?: string;
+  };
+}
+
+export interface DeadStockItem {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  unit: string;
+  currentStock: number;
+  unitCost: number;
+  salePrice?: number;
+  tiedCapitalMinor: number;
+  lastSoldDate?: string;
+  daysIdle: number;
+  velocityClass: 'fast_a' | 'medium_b' | 'dead_c';
+  associatedCustomerCount?: number;
+}
+
+export interface PetFeedingCycle {
+  id: string;
+  petProfileId: string;
+  petName: string;
+  customerName: string;
+  customerPhone: string;
+  foodItemId: string;
+  foodItemName: string;
+  bagWeightKg: number;
+  dailyGramsEstimated: number;
+  purchaseDate: string;
+  estimatedDepletionDate: string;
+  reminderStatus: 'active' | 'depleted' | 'reminded';
+}
+
+export interface DriverSettlementRecord {
+  id: string;
+  settlementNumber: string;
+  driverId: string;
+  driverName: string;
+  date: string;
+  time: string;
+  ordersDeliveredCount: number;
+  totalCollectedCashMinor: number;
+  commissionEarnedMinor: number;
+  netTurnedOverToSafeMinor: number;
+  voucherId?: string;
+  settledBy: string;
+}
+
 
 

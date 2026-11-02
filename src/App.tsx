@@ -180,11 +180,29 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Check if URL has a dedicated production branch lock (?branch=<businessId>)
+    // Check if URL has a business or branch parameter (?biz=<id> or ?branch=<id>)
     const params = new URLSearchParams(window.location.search);
-    const branchParam = params.get('branch');
-    if (branchParam) {
-      StorageService.setLockedBranchId(branchParam);
+    const targetBizId = params.get('biz') || params.get('branch');
+    if (targetBizId) {
+      const businesses = StorageService.getBusinesses();
+      const matched = businesses.find((b) => b.id === targetBizId);
+      if (matched) {
+        StorageService.switchBusiness(targetBizId);
+      } else {
+        // Check if snapshot exists locally
+        const raw = localStorage.getItem(`fastrest_biz_bundle_${targetBizId}`);
+        if (raw) {
+          try {
+            const bundle = JSON.parse(raw);
+            StorageService.loadBusinessSnapshot(bundle);
+          } catch {
+            // fallback
+          }
+        }
+      }
+      if (params.get('lock') === 'true') {
+        StorageService.setLockedBranchId(targetBizId);
+      }
     }
 
     refreshData();
